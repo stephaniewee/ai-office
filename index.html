@@ -1,0 +1,1329 @@
+<title>AI Office Demo</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: the 3D office fills the whole screen. A slim header + 4 dashboard tiles float on top,
+   zoom controls bottom-right, and a worker's file slides in (right drawer on desktop, bottom sheet on phones).
+   One committed look: bright daytime tech HQ — white glass UI over a pastel office, signal-blue accent. */
+:root{
+  color-scheme: light;
+  --sky:#cfe2f3;
+  --glass:rgba(255,255,255,.86);
+  --glass-2:#f2f6fa;
+  --line:#d3dde8;
+  --fg:#132030;
+  --mute:#5b6c7e;
+  --accent:#2f7fe0;          /* signal blue, dark enough for white text on it */
+  --accent-ink:#ffffff;
+  --ok:#1fae78; --warn:#e8961c; --bad:#e24c4c; --idle:#2f7fe0; --off:#8a97a4;
+  --display:"Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --body:"IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+html,body{height:100%;overflow:hidden}
+body{background:var(--sky);color:var(--fg);font-family:var(--body);font-size:14px;margin:0;
+  padding-left:max(16px, env(safe-area-inset-left,0px));padding-right:max(16px, env(safe-area-inset-right,0px))}
+*{box-sizing:border-box}
+#scene{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+#scene.dragging{cursor:grabbing}
+.bubbles{position:fixed;inset:0;pointer-events:none;overflow:hidden}
+.bubble{position:absolute;transform:translate(-50%,-100%);background:var(--glass);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:5px 10px;font-family:var(--body);font-size:12px;line-height:1.3;max-width:180px;pointer-events:auto;cursor:pointer;text-align:left;backdrop-filter:blur(8px);box-shadow:0 4px 14px rgba(19,32,48,.12)}
+.bubble b{font-family:var(--display);font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px}
+.bubble::after{content:"";position:absolute;left:50%;bottom:-6px;width:10px;height:10px;background:#fff;border-right:1px solid var(--line);border-bottom:1px solid var(--line);transform:translateX(-50%) rotate(45deg)}
+.bubble.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent),0 6px 18px rgba(47,127,224,.3)}
+.bubble.boss b{color:#5a3fd0}
+.bubble.new{border-color:#f0a020;box-shadow:0 0 0 2px #f0a020,0 6px 20px rgba(240,160,32,.35)}
+.badge{display:inline-block;background:#f0a020;color:#2a1a00;font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.06em;border-radius:6px;padding:1px 5px;margin-left:2px}
+.far .bubble .l{display:none}
+.far .bubble{padding:3px 8px}
+
+/* Top overlay */
+.top{position:fixed;top:0;left:0;right:0;z-index:5;pointer-events:none;
+  padding-top:calc(env(safe-area-inset-top,0px) + 12px);padding-left:max(16px, env(safe-area-inset-left,0px));padding-right:max(16px, env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:10px}
+.top > *{pointer-events:auto}
+header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;pointer-events:none}
+header > *{pointer-events:auto}
+.brand{display:flex;align-items:center;gap:10px;background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:7px 12px 7px 7px;backdrop-filter:blur(10px)}
+.logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#2f7fe0,#7b5cff);display:grid;place-items:center;font-family:var(--display);font-weight:700;color:#fff;font-size:15px}
+h1{font-family:var(--display);font-weight:700;font-size:18px;margin:0;line-height:1.05;letter-spacing:.01em}
+h1 small{display:block;font-family:var(--mono);font-weight:400;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--mute);margin-top:2px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-family:var(--mono);font-size:11.5px;padding:6px 10px;border-radius:999px;background:var(--glass);border:1px solid var(--line);color:var(--fg);display:inline-flex;align-items:center;gap:6px;backdrop-filter:blur(10px);font-variant-numeric:tabular-nums}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--idle);flex:none;display:inline-block}
+.dot.working{background:var(--warn);animation:pulse 1.2s infinite}
+.dot.done{background:var(--ok)} .dot.failed{background:var(--bad)} .dot.paused{background:var(--off)}
+@keyframes pulse{50%{opacity:.35}}
+
+.ops{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;max-width:980px}
+.tile{background:var(--glass);border:1px solid var(--line);border-radius:14px;padding:9px 12px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;text-align:left;color:var(--fg);font:inherit;cursor:pointer;min-width:0;backdrop-filter:blur(10px)}
+.tile:hover{border-color:#a9bdd3}
+.tile .k{grid-column:1/-1;font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--mute);display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden}
+.tile .v{font-family:var(--display);font-weight:700;font-size:22px;line-height:1.1;font-variant-numeric:tabular-nums;white-space:nowrap}
+.tile .v small{font-family:var(--body);font-weight:400;font-size:11.5px;color:var(--mute);margin-left:3px}
+.tile .s{grid-column:1/2;font-size:11.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tile svg{grid-row:2/4;grid-column:2;align-self:end}
+.sw{width:9px;height:9px;border-radius:3px;flex:none}
+
+/* Bottom controls */
+.ctrls{position:fixed;z-index:5;right:max(16px, env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px}
+.ctrls button{width:42px;height:42px;padding:0;border-radius:12px;background:var(--glass);border:1px solid var(--line);color:var(--fg);font-size:18px;font-weight:600;backdrop-filter:blur(10px);display:grid;place-items:center}
+.ctrls button svg{width:18px;height:18px}
+.hint{position:fixed;z-index:4;left:max(16px, env(safe-area-inset-left,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));font-family:var(--mono);font-size:11px;color:var(--mute);background:var(--glass);padding:6px 10px;border-radius:10px;border:1px solid var(--line);backdrop-filter:blur(10px);max-width:calc(100% - 100px)}
+
+/* Worker file: drawer / sheet */
+.sheet{position:fixed;z-index:6;right:max(16px, env(safe-area-inset-right,0px));top:var(--sheet-top,150px);bottom:16px;width:400px;max-width:calc(100% - 32px);
+  background:rgba(255,255,255,.95);border:1px solid var(--line);border-radius:18px;box-shadow:0 18px 50px rgba(19,32,48,.18);overflow:auto;
+  transform:translateX(calc(100% + 40px));visibility:hidden;transition:transform .32s cubic-bezier(.2,.8,.2,1),visibility 0s .32s;backdrop-filter:blur(14px)}
+.sheet.open{transform:none;visibility:visible;transition:transform .32s cubic-bezier(.2,.8,.2,1)}
+.sheet-inner{padding:18px;display:flex;flex-direction:column;gap:16px}
+.close{position:sticky;top:0;align-self:flex-end;margin:-6px -6px -44px 0;width:36px;height:36px;padding:0;border-radius:10px;display:grid;place-items:center;font-size:18px;z-index:1}
+.grab{display:none}
+.eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--mute)}
+.who{display:flex;align-items:center;gap:12px;padding-right:40px}
+.avatar{width:46px;height:46px;border-radius:12px;flex:none;display:grid;place-items:center;font-family:var(--display);font-weight:700;font-size:19px;color:#fff}
+.who h2{font-family:var(--display);font-weight:700;font-size:23px;margin:0;letter-spacing:.01em}
+.who p{margin:2px 0 0;color:var(--mute);font-size:13px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:999px;background:var(--glass-2);border:1px solid var(--line);white-space:nowrap}
+dl{display:grid;grid-template-columns:96px minmax(0,1fr);gap:7px 12px;margin:0;font-size:13px}
+dt{color:var(--mute)} dd{margin:0;font-variant-numeric:tabular-nums;min-width:0}
+.section{display:flex;flex-direction:column;gap:8px}
+.report{background:var(--glass-2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:13px;line-height:1.55;max-height:380px;overflow:auto}
+.report h4{font-family:var(--display);font-weight:600;font-size:14.5px;margin:10px 0 4px} .report h4:first-child{margin-top:0}
+.report ul{margin:4px 0;padding-left:18px} .report p{margin:4px 0}
+.report a{color:var(--accent);font-weight:500}
+.empty{color:var(--mute);font-size:13px;margin:0}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+button{font-family:var(--body);font-weight:600;font-size:13px;border-radius:10px;padding:9px 14px;border:1px solid var(--line);background:#fff;color:var(--fg);cursor:pointer}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,textarea:focus-visible,.bubble:focus-visible,.tile:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+textarea{width:100%;min-height:72px;resize:vertical;font-family:var(--body);font-size:14px;background:#fff;color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:10px}
+textarea::placeholder{color:#8c9aab}
+.note{font-size:12px;color:var(--mute);line-height:1.45;margin:0}
+.msg{font-size:12.5px;padding:8px 10px;border-radius:8px;background:var(--glass-2);border-left:3px solid var(--accent)}
+.msg.err{border-left-color:var(--bad)}
+.hist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.hist li{display:grid;grid-template-columns:10px minmax(0,1fr);gap:10px;align-items:start;font-size:12.5px}
+.hist .dot{margin-top:5px}
+.hist time{font-family:var(--mono);font-size:11px;color:var(--mute);display:block}
+.orders{margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.orders li{font-size:12.5px;background:var(--glass-2);border-radius:8px;padding:8px 10px;list-style:none}
+.orders .r{color:var(--mute);margin-top:4px}
+.roster{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.roster button{width:100%;display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:10px;align-items:center;text-align:left;padding:10px;font-weight:400}
+.roster .avatar{width:36px;height:36px;font-size:15px;border-radius:9px}
+.roster b{font-family:var(--display);font-weight:600;font-size:15px;display:block}
+.roster .sub{color:var(--mute);font-size:12px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.roster span{min-width:0}
+.big{font-family:var(--display);font-weight:700;font-size:30px;font-variant-numeric:tabular-nums}
+hr{border:0;border-top:1px solid var(--line);margin:0;width:100%}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.field{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--mute);min-width:0;flex:1 1 90px}
+.field input,.field select,select.status{font:inherit;font-size:13.5px;color:var(--fg);background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 9px;min-width:0;width:100%}
+.list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.item{background:var(--glass-2);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;align-items:center;font-size:13px}
+.item b{font-weight:600;display:block}
+.item .meta{color:var(--mute);font-size:12px}
+.item a{color:var(--accent);font-weight:500;font-size:12.5px}
+.item .acts{display:flex;gap:6px;align-items:center}
+.item select.status{width:auto;padding:6px 8px;font-size:12.5px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:6px 10px;font-size:12px;background:#fff}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.seg button.skip[aria-pressed="true"]{background:#8a97a4}
+.counts{display:flex;gap:6px;flex-wrap:wrap}
+.q{background:var(--glass-2);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:13.5px}
+.q .qt{font-weight:600;line-height:1.4}
+.q .tp{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+.opts{display:flex;flex-direction:column;gap:6px}
+.opts button{text-align:left;font-weight:500;padding:9px 12px;line-height:1.35}
+.opts button.right{background:#e3f6ee;border-color:#1fae78;color:#0d5c3d}
+.opts button.wrong{background:#fde6e6;border-color:#e24c4c;color:#8a1f1f}
+.why{font-size:12.5px;color:var(--mute);line-height:1.45}
+.score{font-family:var(--display);font-weight:700;font-size:22px}
+.chipset{display:flex;flex-wrap:wrap;gap:6px}
+.tchip{font-size:12px;font-weight:500;padding:5px 10px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--mute)}
+.tchip[aria-pressed="true"]{background:#efeaff;border-color:#7b5cff;color:#3d2a99}
+.subj{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+.subj header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:nowrap}
+.subj header b{font-family:var(--display);font-size:14.5px}
+.mini{padding:5px 9px;font-size:12px;font-weight:500}
+.inline{display:flex;gap:6px}
+.inline input{flex:1;min-width:0;font:inherit;font-size:13px;border:1px solid var(--line);border-radius:9px;padding:6px 9px}
+.answer{background:var(--glass-2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:13.5px;line-height:1.55}
+.answer p{margin:4px 0}.answer ul{margin:4px 0;padding-left:18px}
+
+@media (max-width: 900px){
+  .ops{gap:6px}
+  .tile{padding:7px 9px;border-radius:12px}
+  .tile .v{font-size:18px}
+  .tile .s, .tile svg{display:none}
+  .tile .k{font-size:9px;letter-spacing:.06em}
+  h1{font-size:16px}
+  .chip#clock{display:none}
+  .sheet{left:0;right:0;width:auto;max-width:none;top:auto;bottom:0;max-height:72svh;border-radius:20px 20px 0 0;
+    padding-left:max(0px, env(safe-area-inset-left,0px));padding-right:max(0px, env(safe-area-inset-right,0px));padding-bottom:env(safe-area-inset-bottom,0px);
+    transform:translateY(105%)}
+  .sheet-inner{padding:10px 16px 20px}
+  .grab{display:block;width:40px;height:5px;border-radius:3px;background:#c5d0dc;margin:0 auto 2px}
+  body.sheet-open .ctrls, body.sheet-open .hint{display:none}
+}
+@media (prefers-reduced-motion: reduce){ .dot.working{animation:none} .sheet,.sheet.open{transition:none} }
+</style>
+
+<canvas id="scene" aria-label="3D office with four AI workers and your boss desk. Drag to move, pinch or scroll to zoom, tap anyone to open their file."></canvas>
+<div class="bubbles" id="bubbles"></div>
+
+<div class="top">
+  <header>
+    <div class="brand">
+      <div class="logo" aria-hidden="true">AI</div>
+      <h1>AI Office<small>Live demo · sample data</small></h1>
+    </div>
+    <div class="chips"><button class="chip how" id="howBtn" type="button">How it works</button><span class="chip" id="clock">--:-- SGT</span><span class="chip" id="live"><span class="dot"></span>Connecting…</span></div>
+  </header>
+  <section class="ops" id="ops" aria-label="Office dashboard"></section>
+</div>
+
+<div class="ctrls" aria-label="View controls">
+  <button id="zin" type="button" aria-label="Zoom in">+</button>
+  <button id="zout" type="button" aria-label="Zoom out">−</button>
+  <button id="home" type="button" aria-label="Show whole office"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+  <button id="team" type="button" aria-label="Team view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2c3 .2 5.5 2.6 5.5 5.8"/></svg></button>
+</div>
+<div class="hint" id="hint">Demo · drag to move · pinch or scroll to zoom · tap a worker and hit “Start shift now”</div>
+
+<aside class="sheet" id="sheet" aria-live="polite"><div class="sheet-inner"><div class="grab" aria-hidden="true"></div><button class="close" id="close" type="button" aria-label="Close">✕</button><div id="panel" style="display:flex;flex-direction:column;gap:16px"></div></div></aside>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ---------- Demo runtime: in-memory database, simulated agents, canned answers ---------- */
+const DEMO = (() => {
+  const DAY = 864e5, now = Date.now();
+  const SG = 8*3600e3;
+  const iso = off => new Date(now + SG + off*DAY).toISOString().slice(0,10);
+  const lastSat = (() => { const d = new Date(now + SG); const back = (d.getUTCDay()+1)%7; return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()-back); })();
+  const satIso = w => new Date(lastSat - w*7*DAY).toISOString().slice(0,10);
+  const sunIso = w => new Date(lastSat - w*7*DAY + DAY).toISOString().slice(0,10);
+  const W = (o) => ({status:"done", ...o});
+
+  const store = {
+    workers: {
+      kai: W({name:"Kai", role:"Job Scout", job:"Finds full-time grad and Management Associate roles in Singapore for 2027 graduates.", scheduleText:"Mondays, 8:47am", schedule:{type:"weekly",dow:1,hour:8,minute:47}, triggerId:"demo-kai", lastRun:now-3*3600e3, bubble:"3 new MA programmes — 1 closes soon", placeholder:"e.g. more bank MA programmes",
+        reportBody:"### New this week\n- **Technology MA Programme — Merlion Bank (sample)** · data/AI track, fintech projects · closes in 12 days\n- **Graduate Software Engineer — Kopi Labs (sample)** · payments platform, Python + React\n- **Regtech Graduate Associate — Straits Regulator (sample)** · suptech, ML on filings\n\n### Your pipeline\n1 saved · 2 applied · 1 interview. The Merlion Bank MA closes soon.\n\n**Tip:** most bank MA programmes start with an online game-based test. Do a practice round this week."}),
+      mira: W({name:"Mira", role:"Study Buddy", job:"Writes an 8-question quiz on only the topics you switch on, and targets the ones you got wrong last time.", scheduleText:"Sundays 7:43pm · also Wednesdays before exams", schedule:{type:"weekly",dow:0,hour:19,minute:43}, triggerId:"demo-mira", lastRun:now-26*3600e3, bubble:"Data Science exam in 16 days — quiz up", placeholder:"e.g. harder questions",
+        subjects:[{name:"Intro to Data Science (sample)", examDate:iso(16), topics:[{name:"Statistics",on:true},{name:"Machine learning",on:true},{name:"Python",on:true},{name:"Data visualisation",on:false}]},
+                  {name:"Corporate Finance (sample)", examDate:iso(30), topics:[{name:"Time value of money",on:true},{name:"Ratio analysis",on:true},{name:"Capital budgeting",on:true},{name:"Cost of capital",on:false}]}],
+        quiz:{id:"demo-quiz-1", subject:"Intro to Data Science (sample)", questions:[
+          {q:"A dataset of salaries has a few huge outliers. Which summary is more robust?", options:["Mean","Median","Range","Sum"], answer:1, why:"The median barely moves when a few extreme values are added.", topic:"Statistics"},
+          {q:"A correlation coefficient of −0.9 means…", options:["No relationship","A weak positive relationship","A strong negative linear relationship","One variable causes the other"], answer:2, why:"Close to −1 means a strong negative linear relationship (not causation).", topic:"Statistics"},
+          {q:"Standard deviation measures…", options:["The middle value","How spread out the data is around the mean","The most common value","The total of all values"], answer:1, why:"It's the typical distance of values from the mean.", topic:"Statistics"},
+          {q:"A model scores 99% on training data but 60% on new data. This is…", options:["Underfitting","Overfitting","Data leakage prevention","Regularisation"], answer:1, why:"It memorised the training data instead of learning general patterns.", topic:"Machine learning"},
+          {q:"Why split data into training and test sets?", options:["To train faster","To estimate performance on unseen data","To remove outliers","To balance the classes"], answer:1, why:"The test set acts as data the model has never seen.", topic:"Machine learning"},
+          {q:"For a fraud dataset where 1% of cases are fraud, which metric is more useful than accuracy?", options:["Accuracy","F1-score","R²","Mean squared error"], answer:1, why:"F1 balances precision and recall on the rare class.", topic:"Machine learning"},
+          {q:"In pandas, which shows the first 5 rows of a DataFrame df?", options:["df.first()","df.top(5)","df.head()","df.show()"], answer:2, why:"head() returns the first 5 rows by default.", topic:"Python"},
+          {q:"What does len([4, 8, 15]) return?", options:["3","27","15","An error"], answer:0, why:"len() counts the items in the list.", topic:"Python"}]},
+        reportBody:"### Data Science quiz is up\nTap the answers on my desk.\n\n**Covers:** statistics, machine learning, Python\n\n**Focus:** last time you missed 2 machine learning questions, so there are extra ones.\n\n**Exam:** 16 days to go."}),
+      theo: W({name:"Theo", role:"Project PM", job:"Tracks your group-project deadlines and tells you what to focus on this week.", scheduleText:"Mondays, 8:52am", schedule:{type:"weekly",dow:1,hour:8,minute:52}, triggerId:"demo-theo", lastRun:now-50*3600e3, bubble:"Report due in 20 days",
+        projects:[{name:"Capstone report + demo day (sample)", due:iso(20)+"T12:00", myPart:"Backend API + system design section"},{name:"Group pitch presentation (sample)", due:iso(9), myPart:"Market research + slides 4–8"}],
+        reportBody:"### Due soon\n- **Group pitch presentation** — **9 days left** · your part: market research + slides 4–8\n- **Capstone report** — **20 days left** · your part: backend API + system design\n\n### This week, focus on\n- Draft slides 4–8 and send to the group by Wed\n- Write the system design section of the capstone\n- Book a 30-min group check-in before the weekend"}),
+      ava: W({name:"Ava", role:"Hours & Pay", job:"Logs your weekend café shifts, keeps weekly and monthly hours, and estimates pay.", scheduleText:"Sundays, 10:41pm", schedule:{type:"weekly",dow:0,hour:22,minute:41}, triggerId:"demo-ava", lastRun:now-5*3600e3, bubble:"14.5 h last weekend · ~$152", hourlyRate:10.5, placeholder:"e.g. Sat 10–6, 1h break",
+        shifts:[0,1,2].flatMap(w => [{date:satIso(w),start:"10:00",end:"18:00",breakMins:45,hours:7.25,note:"sample"},{date:sunIso(w),start:"11:00",end:"19:00",breakMins:45,hours:7.25,note:"sample"}]),
+        reportBody:"### This week\n- **Sat** — 10:00–18:00, 45 min break · **7.25 h**\n- **Sun** — 11:00–19:00, 45 min break · **7.25 h**\n\n### Pay estimate\n≈ $152 for last weekend at $10.50/h (estimate before deductions, check your payslip)."}),
+      nova: W({name:"Nova", role:"Weekly Planner", job:"Builds your Mon–Sun plan from everyone else's info.", scheduleText:"Sundays, 9:13pm", schedule:{type:"weekly",dow:0,hour:21,minute:13}, triggerId:"demo-nova", lastRun:now-28*3600e3, bubble:"Week planned · 2 big deadlines",
+        reportBody:"### Top 3 this week\n- Slides 4–8 for the group pitch\n- Capstone system design section\n- Merlion Bank MA application (closes soon)\n\n### Mon\n- 7–9pm · Pitch slides draft\n### Tue\n- 5:30–9pm · AI Tinkerers build night (you're going)\n### Wed\n- 7–8pm · Mira's machine learning revision\n### Thu\n- 7–9pm · Merlion Bank MA application\n### Fri\n- Rest evening\n### Sat\n- 10am–6pm · café shift\n### Sun\n- 11am–7pm · café shift\n\n**Heads-up:** the pitch is 9 days out. Don't let the weekend shifts eat your prep."}),
+      rex: W({name:"Rex", role:"Event Scout", job:"Finds hackathons, meetups and career fairs in Singapore for the next 4 weeks.", scheduleText:"Saturdays, 9:23am", schedule:{type:"weekly",dow:6,hour:9,minute:23}, triggerId:"demo-rex", lastRun:now-4*24*3600e3, bubble:"5 SG events · 2 free passes",
+        reportBody:"### New this week\n- **Singapore FinTech Festival 2026** — 18–20 Nov · free Academic Pass · the fintech event of the year\n- **AI Tinkerers SG x ElevenLabs** — 10 Nov · free · hands-on voice-agent build night\n- **STACK Conference 2026** — 4–5 Nov · GovTech dev talks\n- **Singapore Blockchain Week** — 13–17 Nov · paid · ⚠️ weekend\n\n**Deadline alert:** grab the free SWITCH pass before 27 Oct."}),
+      juno: W({name:"Juno", role:"Portfolio Polisher", job:"Picks one project a week and gives you a paste-ready intro, resume bullets and one upgrade.", scheduleText:"Saturdays, 10:31am", schedule:{type:"weekly",dow:6,hour:10,minute:31}, triggerId:"demo-juno", lastRun:now-4*24*3600e3, bubble:"Budget app README upgrade ready",
+        reportBody:"### Budget tracker app (sample) — this week's upgrade\n### Paste-ready intro\nA personal budget tracker that categorises spending automatically and shows where your money goes each month.\n\n### Resume bullets\n- Built a React + FastAPI budget tracker with automatic spending categories\n- Designed a PostgreSQL schema for transactions, budgets and alerts\n- Added monthly charts and overspend alerts\n\n### Do this week\n- Record a 30-second demo GIF and put it at the top of the README"}),
+      lin: W({name:"Lin", role:"Availability Helper", job:"Works out which weekends you can work next month and drafts the message to your manager.", scheduleText:"Monthly on the 20th, 7:53pm", schedule:{type:"monthly",day:20,hour:19,minute:53}, triggerId:"demo-lin", lastRun:now-2*24*3600e3, bubble:"Next month ready to send",
+        reportBody:"### Next month's weekends\n- **Week 1** — ✅ available\n- **Week 2** — ⚠️ maybe — report due Monday\n- **Week 3** — ❌ exam on Tuesday\n- **Week 4** — ✅ available\n\n### Message to your manager\nHi! Here's my availability for next month: weekends 1 and 4 are good. Weekend 2 is tight because of a deadline, and I can't do weekend 3 due to exams. Thank you!"}),
+    },
+    jobs: {
+      j1:{title:"Technology MA Programme (sample)", company:"Merlion Bank", url:"", status:"saved", foundAt:now-3*3600e3},
+      j2:{title:"Graduate Software Engineer (sample)", company:"Kopi Labs", url:"", status:"new", foundAt:now-3*3600e3},
+      j3:{title:"Regtech Graduate Associate (sample)", company:"Straits Regulator", url:"", status:"new", foundAt:now-3*3600e3},
+      j4:{title:"Data & AI Graduate Programme (sample)", company:"Lion City Insure", url:"", status:"applied", foundAt:now-9*DAY},
+      j5:{title:"Graduate Analyst, Payments (sample)", company:"Harbourline Pay", url:"", status:"interview", foundAt:now-16*DAY},
+      j6:{title:"Blockchain Engineer, Graduate (sample)", company:"Orchid Chain", url:"", status:"applied", foundAt:now-16*DAY},
+    },
+    events: {
+      e1:{title:"SWITCH 2026", start:"2026-10-27", end:"2026-10-29", time:"", price:"free (Attendee Pass)", url:"https://hub.causo.ai/events/switch-singapore", going:"going", weekend:false},
+      e2:{title:"STACK Conference 2026 (GovTech)", start:"2026-11-04", end:"2026-11-05", time:"", price:"check page", url:"https://www.sginnovate.com/event/stack-conference-2026", going:null, weekend:false},
+      e3:{title:"AI Tinkerers SG x ElevenLabs: Build Voice AI Agents", start:"2026-11-10", end:"2026-11-10", time:"5:30–9pm", price:"free (register)", url:"https://singapore.aitinkerers.org/p/ai-tinkerers-singapore-x-elevenlabs-build-voice-ai-creative-agents", going:"going", weekend:false},
+      e4:{title:"Singapore Blockchain Week 2026", start:"2026-11-13", end:"2026-11-17", time:"", price:"paid $38", url:"https://luma.com/cvl6h0s0", going:"skip", weekend:true},
+      e5:{title:"Singapore FinTech Festival 2026", start:"2026-11-18", end:"2026-11-20", time:"", price:"free (Academic Pass)", url:"https://www.fintechfestival.sg/themes/talent", going:null, weekend:false},
+    },
+    runs: {}, orders: {}, seen: {}, quizAttempts: {},
+    office: { digest: { lastRun: now-26*3600e3, reportBody:"### Your week in one look\n- Group pitch presentation in 9 days\n- 3 new grad roles, 1 closes soon\n- Quiz: 6/8 on Data Science, weak on machine learning\n- 14.5 h worked last weekend · ~$152\n\n### Do next\n1. **Kai** — apply to the Merlion Bank MA before it closes\n2. **Theo** — draft your pitch slides\n3. **Mira** — redo the machine learning questions\n\n### Office status\nAll 8 workers ran fine this week." } },
+  };
+  ["kai","mira","theo","ava","nova","rex","juno","lin"].forEach((id,i) => { store.runs["r"+i] = {workerId:id, at:store.workers[id].lastRun, status:"done", summary:store.workers[id].bubble}; });
+
+  const subs = [];
+  const col = c => store[c] || (store[c] = {});
+  const clone = v => JSON.parse(JSON.stringify(v));
+  const snapFor = q => {
+    let docs = Object.entries(col(q.col)).map(([id,d]) => ({id, exists:true, data:() => d, metadata:{fromCache:false, hasPendingWrites:false}}));
+    if(q.order) docs.sort((a,b) => { const x = a.data()[q.order], y = b.data()[q.order]; return (x > y ? 1 : x < y ? -1 : 0) * (q.dir === "desc" ? -1 : 1); });
+    if(q.lim) docs = docs.slice(0, q.lim);
+    return {docs, size:docs.length, empty:!docs.length, docChanges:() => []};
+  };
+  const emit = c => subs.filter(s => s.col === c).forEach(s => setTimeout(() => s.cb(snapFor(s)), 0));
+  const docRef = (c, id) => ({ id,
+    async set(d){ col(c)[id] = clone(d); emit(c); },
+    async update(d){ col(c)[id] = {...(col(c)[id]||{}), ...clone(d)}; emit(c); },
+    async delete(){ delete col(c)[id]; emit(c); },
+    async get(){ const d = col(c)[id]; return {id, exists:!!d, data:() => d}; } });
+  const query = (c, o={}) => ({
+    orderBy:(f,d="asc") => query(c, {...o, order:f, dir:d}), limit:n => query(c, {...o, lim:n}), where:() => query(c, o),
+    onSnapshot(cb){ const s = {col:c, ...o, cb}; subs.push(s); setTimeout(() => cb(snapFor(s)), 30); return () => { const i = subs.indexOf(s); if(i >= 0) subs.splice(i,1); }; },
+    doc:id => docRef(c, id),
+    async add(d){ const id = "d"+Math.random().toString(36).slice(2,9); col(c)[id] = clone(d); emit(c); return docRef(c,id); },
+  });
+  const db = { collection:c => query(c), doc:p => { const [c,id] = p.split("/"); return docRef(c,id); } };
+
+  const mcp = { async callTool(server, tool, input){
+    const id = Object.keys(store.workers).find(k => store.workers[k].triggerId === input.trigger_id);
+    if(!id) return {};
+    if(tool === "update_trigger") return {};
+    const w = store.workers[id], prevBubble = w.bubble;
+    await db.doc("workers/"+id).update({status:"working", bubble:"Working on it (demo)…"});
+    setTimeout(async () => {
+      const t = Date.now();
+      await db.doc("workers/"+id).update({status:"done", lastRun:t, bubble:prevBubble, reportBody:"_Demo run just now. In the real office this shift is a scheduled Claude agent doing the work._\n\n" + String(w.reportBody).replace(/^_Demo run[^\n]*\n\n/,"")});
+      await db.doc("runs/r"+t).set({workerId:id, at:t, status:"done", summary:prevBubble});
+      for(const [oid,o] of Object.entries(store.orders)) if(o.workerId === id && o.status === "pending") await db.doc("orders/"+oid).update({status:"done", reply:"Done (demo)"});
+    }, 4500);
+    return {};
+  } };
+
+  const sample = async (prompt, opts={}) => {
+    const q = String(prompt).split("# The question").pop().trim().toLowerCase();
+    let text = "This is the demo, so I'm answering from sample data. In the real office this box asks Claude, using everything the workers have filed.\n\n";
+    if(/free|weekend|sat|sun/.test(q)) text += "- Weekends are mostly taken by café shifts (10am–6pm Sat, 11am–7pm Sun)\n- Weekend 3 is blocked for your exam, per Lin";
+    else if(/apply|job|role/.test(q)) text += "- Apply to the **Merlion Bank MA** first. It closes soonest\n- Prep for your **Harbourline Pay** interview: payments basics + one project story";
+    else if(/exam|study|quiz/.test(q)) text += "- Data Science exam in 16 days\n- Your weak spot is machine learning (overfitting, metrics). Redo Mira's quiz and focus there";
+    else text += "- Biggest thing this week: the group pitch presentation in 9 days\n- Then the Merlion Bank MA application";
+    let out = "";
+    for(const word of text.split(/(\s+)/)){ if(opts.signal?.aborted) throw {code:"cancelled", text:out}; out += word; opts.onText?.({text:out, delta:word}); await new Promise(r => setTimeout(r, 18)); }
+    return {text:out, truncated:false, modelTierApplied:"default"};
+  };
+
+  return { use: async n => n === "db" ? db : n === "mcp" ? mcp : n === "sample" ? sample : null };
+})();
+
+</script>
+<script>
+(() => {
+/* ---------- Floor plan (layout only; worker data lives in the db) ---------- */
+const POD_Z = -4.3, FRONT_Z = 11.4, POD_W = 7, POD_D = 5.6;
+const DESKS = {
+  kai:  { x:-10.5, dept:"Careers",   color:0x2f7fe0, rug:0xd6e7fb, shirt:0x2d5fa8, hair:0x231a14, style:"spiky", initials:"K" },
+  mira: { x: -3.5, dept:"Study",     color:0x7b5cff, rug:0xe6dffc, shirt:0x6a4fc4, hair:0x5a3420, style:"bun",   initials:"M" },
+  theo: { x:  3.5, dept:"Projects",  color:0x1fae78, rug:0xd4f2e5, shirt:0x22865f, hair:0x141414, style:"side",  initials:"T" },
+  ava:  { x: 10.5, dept:"Part-time", color:0xf06a96, rug:0xfde0ea, shirt:0x26262b, hair:0x3a2418, style:"pony",  initials:"A", end:true },
+  nova: { x:-10.5, z:FRONT_Z, dept:"Planning",   color:0xe8961c, rug:0xfff0d6, shirt:0xc77712, hair:0x2b1d14, style:"bob",    initials:"N" },
+  rex:  { x: -3.5, z:FRONT_Z, dept:"Events",     color:0x14a8b4, rug:0xd6f3f5, shirt:0x0f7f88, hair:0x6b3b1f, style:"curly",  initials:"R" },
+  juno: { x:  3.5, z:FRONT_Z, dept:"Portfolio",  color:0x5f9e1e, rug:0xe6f3d3, shirt:0x4a7d16, hair:0x1a1a1a, style:"beanie", initials:"J" },
+  lin:  { x: 10.5, z:FRONT_Z, dept:"Scheduling", color:0x5a6b7d, rug:0xe3e8ee, shirt:0x3f4c5a, hair:0x241914, style:"bun",    initials:"L", end:true },
+};
+for(const d of Object.values(DESKS)) d.z ??= POD_Z;
+const ORDER = ["kai","mira","theo","ava","nova","rex","juno","lin"];
+const MEET = { x:-10.2, z:3.6 };
+const SEATS = Array.from({length:8}, (_,i) => { const a = Math.PI/8 + i*Math.PI/4; return [Math.cos(a)*2.0, Math.sin(a)*2.0]; });
+const BOSS = { x:0, z:2.6 };
+const STATUS_LABEL = { idle:"On standby", working:"Working…", done:"Finished", failed:"Run failed", paused:"On leave" };
+const STATUS_HEX = { idle:0x2f7fe0, working:0xe8961c, done:0x1fae78, failed:0xe24c4c, paused:0x8a97a4 };
+const SUBJECTS = {};
+const SCALE = 1.35;
+
+let workers = {}, runs = [], orders = [], jobs = [], events = [], seen = {}, attempts = {}, office = {};
+const quizPicks = {};
+let showAllJobs = false, askCtl = null, askState = {q:"", text:"", busy:false, err:""};
+let selected = null;
+let db = null, mcp = null, sampleFn = null, flash = null;
+
+/* ---------- Helpers ---------- */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const hex = n => "#" + n.toString(16).padStart(6,"0");
+const SGT = 8*3600e3;
+const sgNow = () => new Date(Date.now() + SGT);
+const isPhone = () => matchMedia("(max-width: 900px)").matches;
+function fmt(ts){
+  if(!ts) return "—";
+  const d = new Date(ts + SGT);
+  return d.toLocaleDateString("en-SG",{timeZone:"UTC",weekday:"short",day:"numeric",month:"short"}) + ", " +
+         d.toLocaleTimeString("en-SG",{timeZone:"UTC",hour:"numeric",minute:"2-digit"});
+}
+function ago(ts){
+  if(!ts) return "";
+  const m = Math.round((Date.now()-ts)/60000);
+  if(m < 1) return "just now"; if(m < 60) return `${m} min ago`;
+  const h = Math.round(m/60); if(h < 36) return `${h} h ago`;
+  return `${Math.round(h/24)} d ago`;
+}
+function nextRun(s){
+  if(!s) return null;
+  const now = Date.now(), sg = sgNow();
+  for(let i=0;i<9;i++){
+    const c = Date.UTC(sg.getUTCFullYear(), sg.getUTCMonth(), sg.getUTCDate()+i, s.hour, s.minute) - SGT;
+    if(s.type === "weekly" && new Date(c + SGT).getUTCDay() !== s.dow) continue;
+    if(s.type === "monthly") continue;
+    if(c > now) return c;
+  }
+  if(s.type === "monthly"){
+    for(let m=0;m<3;m++){ const c = Date.UTC(sg.getUTCFullYear(), sg.getUTCMonth()+m, s.day, s.hour, s.minute) - SGT; if(c > now) return c; }
+  }
+  return null;
+}
+function md(text){
+  const lines = esc(text||"").split(/\r?\n/);
+  let out = "", inList = false;
+  const inline = l => l.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
+    .replace(/\[([^\]]+)\]\((https:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  for(const raw of lines){
+    const l = raw.trim();
+    if(/^[-*] /.test(l)){ if(!inList){out+="<ul>";inList=true} out+=`<li>${inline(l.slice(2))}</li>`; continue; }
+    if(inList){out+="</ul>";inList=false}
+    if(/^#{1,4} /.test(l)) out += `<h4>${inline(l.replace(/^#+ /,""))}</h4>`;
+    else if(l) out += `<p>${inline(l)}</p>`;
+  }
+  return out + (inList ? "</ul>" : "");
+}
+function bars(vals, color, w=70, h=28){
+  const max = Math.max(1, ...vals), bw = w / vals.length;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">
+    <line x1="0" y1="${h-0.5}" x2="${w}" y2="${h-0.5}" stroke="#d3dde8"/>
+    ${vals.map((v,i) => { const bh = Math.max(v ? 3 : 1, (v/max)*(h-4)); const last = i === vals.length-1;
+      return `<rect x="${i*bw+1.5}" y="${h-bh}" width="${Math.max(2,bw-3)}" height="${bh}" rx="2" fill="${color}" opacity="${last?1:.4}"/>`; }).join("")}
+  </svg>`;
+}
+
+/* ---------- Derived numbers ---------- */
+function weekStart(ts){ const d = new Date(ts + SGT); const dow = (d.getUTCDay()+6)%7; return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()-dow); }
+function hoursByWeek(shifts, n=6){
+  const cur = weekStart(Date.now()), out = Array(n).fill(0);
+  for(const s of shifts||[]){
+    const t = Date.parse(String(s.date)+"T00:00:00Z"); if(isNaN(t)) continue;
+    const idx = n-1 - Math.round((cur - weekStart(t - SGT)) / (7*864e5));
+    if(idx >= 0 && idx < n) out[idx] += Number(s.hours)||0;
+  }
+  return out;
+}
+function monthHours(shifts){
+  const ym = sgNow().toISOString().slice(0,7);
+  const m = (shifts||[]).filter(x => String(x.date||"").startsWith(ym));
+  return { total: m.reduce((a,x)=>a+(Number(x.hours)||0),0), count: m.length };
+}
+const runsOf = id => runs.filter(r => r.workerId === id).sort((a,b)=>a.at-b.at);
+function rolesFound(r){ if(typeof r.count === "number") return r.count; const m = String(r.summary||"").match(/\d+/); return m ? +m[0] : 0; }
+function nextDeadline(projects){
+  const now = Date.now();
+  const list = (projects||[]).map(p => {
+    const due = String(p.due||"");
+    const t = !due ? NaN : Date.parse(due.length <= 10 ? due+"T23:59:00+08:00" : (/[zZ]|[+-]\d\d:?\d\d$/.test(due) ? due : due+"+08:00"));
+    return {...p, t};
+  }).filter(p => !isNaN(p.t) && p.t > now).sort((a,b)=>a.t-b.t);
+  return list[0] ? {...list[0], days: Math.ceil((list[0].t - now)/864e5)} : null;
+}
+const nice = n => (Math.round(n*10)/10).toString();
+
+/* ---------- Three.js scene ---------- */
+const canvas = $("#scene");
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+const cam = new THREE.OrthographicCamera(-10,10,6,-6,0.1,300);
+const CAM_OFF = new THREE.Vector3(16,11.5,17);
+const VIEW_DIR = CAM_OFF.clone().negate().normalize();
+const RIGHT = new THREE.Vector3(CAM_OFF.z,0,-CAM_OFF.x).normalize();
+const FWD = new THREE.Vector3(-CAM_OFF.x,0,-CAM_OFF.z).normalize();
+const SIN_P = CAM_OFF.y / CAM_OFF.length();
+const target = new THREE.Vector3(0,1,0), wantTarget = target.clone();
+let zoom = 1, wantZoom = 1;
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0xb7c4d2, 0.8); scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff6e8, 0.75);
+sun.position.set(8,24,16); sun.castShadow = true; sun.shadow.mapSize.set(2048,2048); sun.shadow.bias = -0.0005;
+Object.assign(sun.shadow.camera,{left:-22,right:22,top:22,bottom:-22,far:80}); scene.add(sun);
+
+const lam = c => new THREE.MeshLambertMaterial({color:c});
+const glow = c => new THREE.MeshBasicMaterial({color:c});
+function box(w,h,d,m,x,y,z,parent=scene){
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), typeof m === "number" ? lam(m) : m);
+  mesh.position.set(x,y,z); mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh;
+}
+function cyl(rt,rb,h,m,x,y,z,parent=scene,seg=20){
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg), typeof m === "number" ? lam(m) : m);
+  mesh.position.set(x,y,z); mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh;
+}
+function ball(r,c,x,y,z,parent=scene){ const m = new THREE.Mesh(new THREE.SphereGeometry(r,16,12), lam(c)); m.position.set(x,y,z); m.castShadow = true; parent.add(m); return m; }
+const textPlanes = [];
+function textPlane(w,h,draw,pw=1024){
+  const c = document.createElement("canvas"); c.width = pw; c.height = Math.round(pw*h/w);
+  const tex = new THREE.CanvasTexture(c); tex.anisotropy = 4;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w,h), new THREE.MeshBasicMaterial({map:tex, transparent:true}));
+  let lastArgs = [];
+  mesh.userData.redraw = (...a) => { if(a.length) lastArgs = a; const g = c.getContext("2d"); g.clearRect(0,0,c.width,c.height); draw(g, c.width, c.height, ...lastArgs); tex.needsUpdate = true; };
+  mesh.userData.redraw(); textPlanes.push(mesh); return mesh;
+}
+const label = (text, color, size, font="600 {s}px 'JetBrains Mono', monospace") => (g,w,h) => {
+  g.font = font.replace("{s}", size); g.fillStyle = color; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(text, w/2, h/2+4);
+};
+
+/* Shell */
+const W = 30, D = 21.8, FZ = 3.7, BACK = FZ - D/2, LEFT = -W/2;
+const floor = box(W,0.3,D,lam(0xe9eef3),0,-0.15,FZ);
+const grid = new THREE.GridHelper(W, 30, 0xd2dbe5, 0xdde4eb); grid.position.set(0,0.011,FZ); grid.scale.z = D/W; scene.add(grid);
+const wallMat = lam(0xf8fafc);
+box(W,4.4,0.3,wallMat,0,2.2,BACK);
+box(0.3,4.4,D,wallMat,LEFT,2.2,FZ);
+box(W,0.22,0.06,lam(0xdfe6ee),0,0.11,BACK+0.18);                  // skirting
+box(0.06,0.22,D,lam(0xdfe6ee),LEFT+0.18,0.11,FZ);
+box(W,0.07,0.05,glow(0x2f7fe0),0,4.32,BACK+0.18);                 // brand strip
+box(0.05,0.07,D,glow(0x2f7fe0),LEFT+0.18,4.32,FZ);
+
+const skyline = textPlane(9,2.8,(g,w,h,night) => {
+  const sky = g.createLinearGradient(0,0,0,h);
+  if(night){ sky.addColorStop(0,"#0a1230"); sky.addColorStop(1,"#283a6e"); } else { sky.addColorStop(0,"#79b4ee"); sky.addColorStop(1,"#e3f1ff"); }
+  g.fillStyle = sky; g.fillRect(0,0,w,h);
+  if(!night){ g.fillStyle="rgba(255,255,255,.85)"; [[.15,.2],[.55,.14],[.8,.26]].forEach(([x,y])=>{ g.beginPath(); g.ellipse(x*w,y*h,60,18,0,0,7); g.ellipse(x*w+40,y*h-10,44,16,0,0,7); g.fill(); }); }
+  const towers = [[0.01,.5],[.07,.38],[.12,.66],[.19,.48],[.26,.8],[.33,.58],[.4,.9],[.47,.62],[.54,.74],[.61,.5],[.68,.86],[.75,.56],[.82,.7],[.89,.46],[.95,.62]];
+  towers.forEach(([x,ht],i) => {
+    const bw = w*0.058, bh = h*ht*0.78, bx = x*w, by = h-bh;
+    g.fillStyle = night ? "#121b3a" : ["#9fb6cf","#b4c6d9","#8ea7c2"][i%3]; g.fillRect(bx,by,bw,bh);
+    g.fillStyle = night ? "rgba(255,214,140,.8)" : "rgba(255,255,255,.35)";
+    for(let yy=by+10; yy<h-8; yy+=16) for(let xx=bx+6; xx<bx+bw-6; xx+=12) if(!night || (((xx|0)*7+(yy|0)*3+i)%5 < 2)) g.fillRect(xx,yy,5,7);
+  });
+  if(night){ g.fillStyle="#f4f1e0"; g.beginPath(); g.arc(w*.86,h*.16,16,0,7); g.fill(); }
+}, 900);
+skyline.position.set(LEFT+0.17,2.35,3.6); skyline.rotation.y = Math.PI/2; scene.add(skyline);
+for(const y of [0.9,3.8]) box(0.12,0.12,9.2,lam(0xc9d4df),LEFT+0.2,y,3.6);
+for(const z of [-0.9,8.1]) box(0.12,3.0,0.12,lam(0xc9d4df),LEFT+0.2,2.35,z);
+
+const sign = textPlane(5.6,0.9, label("AI HQ","#132030",150,"700 {s}px 'Chakra Petch', sans-serif"), 1024);
+sign.position.set(-7.0,3.75,BACK+0.17); scene.add(sign);
+
+const wallScreen = textPlane(7.8,1.3,(g,w,h,data) => {
+  g.fillStyle = "#0f1a2a"; g.fillRect(0,0,w,h);
+  const cols = data || []; const cw = w/3;
+  cols.forEach((col,i) => {
+    const x = i*cw + 30;
+    g.fillStyle = col.color; g.font = "600 28px 'JetBrains Mono', monospace"; g.textBaseline = "alphabetic"; g.fillText(col.title, x, 52);
+    g.fillStyle = "#ffffff"; g.font = "700 74px 'Chakra Petch', sans-serif"; g.fillText(col.big, x, 136);
+    g.fillStyle = "#93a6bb"; g.font = "400 26px 'IBM Plex Sans', sans-serif";
+    (col.lines||[]).slice(0,1).forEach(t => g.fillText(t.length > 28 ? t.slice(0,27)+"…" : t, x, 178));
+    if(i){ g.fillStyle = "#24364d"; g.fillRect(i*cw, 26, 3, h-52); }
+  });
+}, 1600);
+wallScreen.position.set(4.6,3.6,BACK+0.17); scene.add(wallScreen);
+box(8.0,1.5,0.06,lam(0x1f2a38),4.6,3.6,BACK+0.15);
+
+/* Props */
+function plant(x,z,s=1,parent=scene){
+  const g = new THREE.Group();
+  cyl(0.24*s,0.18*s,0.46*s,0xffffff,0,0.23*s,0,g);
+  for(const [dx,dy,dz,r] of [[0,0.78,0,0.36],[0.2,0.62,0.12,0.26],[-0.18,0.66,-0.1,0.24],[0.05,1.02,0.05,0.22]]){
+    const leaf = new THREE.Mesh(new THREE.IcosahedronGeometry(r*s,0), lam(0x49b36f)); leaf.position.set(dx*s,dy*s,dz*s); leaf.castShadow = true; g.add(leaf);
+  }
+  g.position.set(x,0,z); parent.add(g); return g;
+}
+function floorLamp(x,z,color,parent){
+  cyl(0.18,0.22,0.06,0x5b6c7e,x,0.03,z,parent,14); cyl(0.03,0.03,1.9,0x5b6c7e,x,0.98,z,parent,8);
+  const shade = cyl(0.18,0.32,0.34,lam(0xfdfbf4),x,1.95,z,parent,16);
+  const l = new THREE.PointLight(color, 0, 6); l.position.set(x,1.9,z); parent.add(l); return l;
+}
+function shelf(x,z,w,parent,rows=3){
+  box(w,1.9,0.42,lam(0xffffff),x,0.95,z,parent);
+  for(let r=0;r<rows;r++) box(w-0.08,0.04,0.38,lam(0xdfe6ee),x,0.4+r*0.55,z+0.02,parent);
+}
+
+const glassMat = c => new THREE.MeshPhongMaterial({color:c, transparent:true, opacity:0.18, shininess:100, depthWrite:false});
+const pods = {};
+for(const id of ORDER){
+  const d = DESKS[id];
+  const g = new THREE.Group(); g.position.set(d.x,0,d.z); scene.add(g);
+  const bz = -POD_D/2, front = d.z !== POD_Z;
+  const wz = front ? bz + 0.14 : BACK + 0.18 - d.z;          // local z of the wall surface items hang on
+  if(front){ box(POD_W-0.3,1.7,0.12,lam(0xffffff),0,0.85,bz+0.06,g); box(POD_W-0.3,0.05,0.14,lam(d.color),0,1.72,bz+0.06,g); }                                          // back of the pod (near the wall)
+  box(POD_W-0.3,0.03,POD_D-0.3,lam(d.rug),0,0.015,0,g);         // rug
+  box(POD_W-0.3,0.02,0.07,glow(d.color),0,0.035,POD_D/2-0.15,g); // front edge strip
+  if(!d.end) { box(0.06,1.7,POD_D,glassMat(d.color),POD_W/2,0.85,0,g); box(0.08,0.06,POD_D,lam(d.color),POD_W/2,1.72,0,g); }
+  const lbl = textPlane(3.2,0.5, label(d.dept.toUpperCase(), hex(d.color), 76, "700 {s}px 'Chakra Petch', sans-serif"), 768);
+  lbl.position.set(0,front ? 2.05 : 2.62,wz); g.add(lbl);
+  // desk faces the camera, worker sits behind it
+  const deskZ = 0.6;
+  box(3.0,0.1,1.3,lam(0xffffff),0,0.88,deskZ,g);
+  box(0.08,0.88,1.2,lam(0xc4ceda),-1.4,0.44,deskZ,g); box(0.08,0.88,1.2,lam(0xc4ceda),1.4,0.44,deskZ,g);
+  box(2.8,0.5,0.05,lam(d.rug),0,0.55,deskZ+0.6,g);           // modesty panel in the pod colour
+  box(0.08,0.32,0.08,lam(0x3a4656),0,1.08,deskZ+0.22,g);
+  box(1.5,0.86,0.07,lam(0x2a3442),0,1.62,deskZ+0.26,g).castShadow = false;
+  const back = box(1.0,0.07,0.02,glow(d.color),0,1.62,deskZ+0.3,g);
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.36,0.72), glow(0x2f7fe0)); screen.position.set(0,1.62,deskZ+0.223); screen.rotation.y = Math.PI; g.add(screen);
+  box(0.9,0.03,0.28,lam(0xe7ecf2),0,0.945,deskZ-0.2,g);
+  cyl(0.08,0.07,0.17,lam(0xffffff),1.15,1.02,deskZ+0.1,g,12);
+  box(0.36,0.05,0.26,lam(d.color),-1.05,0.955,deskZ+0.05,g);  // notebook
+  // chair
+  box(1.0,0.12,0.9,lam(d.shirt),0,0.52,-0.75,g); box(1.0,1.0,0.12,lam(d.shirt),0,1.05,-1.22,g);
+  cyl(0.06,0.06,0.46,lam(0x5b6c7e),0,0.25,-0.75,g,10); cyl(0.4,0.4,0.05,lam(0x5b6c7e),0,0.03,-0.75,g,5);
+  const lamp = floorLamp(-2.9,bz+0.8,d.color,g);
+  plant(2.9,bz+0.7,1,g);
+  plant(-3.0,POD_D/2-0.6,0.7,g);
+
+  // department-specific props on the back wall / corner
+  if(id === "kai"){ // job board with pinned cards
+    const board = textPlane(2.8,1.5,(c,w,h) => {
+      c.fillStyle="#d9b88f"; c.fillRect(0,0,w,h); c.strokeStyle="#a5825a"; c.lineWidth=14; c.strokeRect(0,0,w,h);
+      c.fillStyle="#132030"; c.font="700 40px 'Chakra Petch', sans-serif"; c.fillText("JOB BOARD", 30, 56);
+      const cols=["#ffffff","#fff3b0","#cfe4ff","#ffd6e2","#d8f5e6"];
+      for(let i=0;i<8;i++){ const x=30+(i%4)*120, y=86+Math.floor(i/4)*90; c.fillStyle=cols[i%5]; c.save(); c.translate(x+48,y+36); c.rotate((i%3-1)*0.05); c.fillRect(-48,-36,96,72); c.fillStyle="#9aa9b9"; for(let l=0;l<3;l++) c.fillRect(-36,-18+l*14,60-l*10,5); c.fillStyle="#e24c4c"; c.beginPath(); c.arc(0,-30,6,0,7); c.fill(); c.restore(); }
+    }, 512);
+    board.position.set(0.2,1.75,wz); g.add(board);
+    box(0.6,0.5,0.45,lam(0xffffff),2.0,0.25,bz+0.6,g); box(0.5,0.08,0.4,lam(0x2f7fe0),2.0,0.54,bz+0.6,g); box(0.5,0.08,0.4,lam(0xe8961c),2.0,0.62,bz+0.6,g);
+  }
+  if(id === "mira"){ // bookshelf + quiz board
+    shelf(-1.6,bz+0.45,2.2,g);
+    const bookCols=[0x7b5cff,0xe8961c,0x2f7fe0,0xe24c4c,0x1fae78,0xf06a96,0x132030];
+    for(let r=0;r<3;r++) for(let i=0;i<9;i++){ const h=0.32+((i*7+r*3)%4)*0.05; box(0.17,h,0.3,lam(bookCols[(i+r*2)%bookCols.length]),-2.55+i*0.215,0.43+r*0.55+h/2,bz+0.47,g); }
+    const qb = textPlane(1.8,1.1,(c,w,h) => { c.fillStyle="#fff"; c.fillRect(0,0,w,h); c.strokeStyle="#c4ceda"; c.lineWidth=10; c.strokeRect(0,0,w,h);
+      c.fillStyle="#7b5cff"; c.font="700 44px 'Chakra Petch', sans-serif"; c.fillText("QUIZ #1",24,58);
+      c.fillStyle="#132030"; c.font="500 30px 'IBM Plex Sans', sans-serif"; ["A) Hashing","B) Consensus ✓","C) Nonce","D) Merkle"].forEach((t,i)=>c.fillText(t,28,110+i*42)); }, 512);
+    qb.position.set(1.4,1.9,wz); g.add(qb);
+  }
+  if(id === "theo"){ // kanban + calendar
+    const kb = textPlane(3.0,1.5,(c,w,h) => { c.fillStyle="#fff"; c.fillRect(0,0,w,h); c.strokeStyle="#c4ceda"; c.lineWidth=10; c.strokeRect(0,0,w,h);
+      ["TO DO","DOING","DONE"].forEach((t,i)=>{ const x=20+i*(w-40)/3; c.fillStyle="#5b6c7e"; c.font="600 26px 'JetBrains Mono', monospace"; c.fillText(t,x+10,44);
+        const n=[3,2,2][i]; for(let k=0;k<n;k++){ c.fillStyle=["#fff3b0","#cfe4ff","#d8f5e6"][i]; c.fillRect(x+10,62+k*58,(w-40)/3-30,46); c.fillStyle="#9aa9b9"; c.fillRect(x+22,78+k*58,90,6); c.fillRect(x+22,92+k*58,60,6);} }); }, 512);
+    kb.position.set(-0.6,1.8,wz); g.add(kb);
+    const cal = textPlane(0.9,0.9,(c,w,h)=>{ c.fillStyle="#fff"; c.fillRect(0,0,w,h); c.fillStyle="#1fae78"; c.fillRect(0,0,w,70); c.fillStyle="#fff"; c.font="700 40px 'Chakra Petch', sans-serif"; c.textAlign="center"; c.fillText("DUE",w/2,50); c.fillStyle="#132030"; c.font="700 120px 'Chakra Petch', sans-serif"; c.fillText("20",w/2,200); }, 256);
+    cal.position.set(1.9,2.0,wz); g.add(cal);
+  }
+  if(id === "ava"){ // sneaker wall + clock
+    shelf(-1.4,bz+0.45,2.6,g,3);
+    const boxCols=[0xf06a96,0xffffff,0x132030,0x2f7fe0,0xe8961c,0x1fae78];
+    for(let r=0;r<3;r++) for(let i=0;i<4;i++) box(0.56,0.3,0.36,lam(boxCols[(i+r)%boxCols.length]),-2.45+i*0.66,0.58+r*0.55,bz+0.47,g);
+    const clock = textPlane(0.9,0.9,(c,w,h)=>{ c.fillStyle="#fff"; c.beginPath(); c.arc(w/2,h/2,w/2-6,0,7); c.fill(); c.strokeStyle="#f06a96"; c.lineWidth=12; c.stroke();
+      c.fillStyle="#132030"; c.font="700 44px 'Chakra Petch', sans-serif"; c.textAlign="center"; c.fillText("SAT·SUN",w/2,h/2+14); }, 256);
+    clock.position.set(1.4,2.2,wz); g.add(clock);
+    box(1.4,0.42,0.6,lam(0xffffff),1.6,0.21,bz+0.9,g); // bench
+  }
+  if(id === "nova"){ // week planner board
+    const pb = textPlane(3.2,1.2,(c,w,h) => { c.fillStyle="#fff"; c.fillRect(0,0,w,h); c.strokeStyle="#c4ceda"; c.lineWidth=10; c.strokeRect(0,0,w,h);
+      const days=["M","T","W","T","F","S","S"], cw=(w-40)/7; days.forEach((t,i)=>{ const x=20+i*cw; c.fillStyle="#5b6c7e"; c.font="600 26px 'JetBrains Mono', monospace"; c.fillText(t,x+cw/2-8,40);
+        const blocks=[[1,0],[0,2],[1,1],[2,0],[0,1],[3,3],[3,3]][i]; const cols=["#cfe4ff","#e6dffc","#d4f2e5","#fde0ea"];
+        for(let k=0;k<2;k++){ const ci=blocks[k]; c.fillStyle=cols[ci]; c.fillRect(x+6,58+k*58,cw-12,48); } }); }, 640);
+    pb.position.set(-0.4,1.0,wz); g.add(pb);
+    box(0.5,0.6,0.5,lam(0xe8961c),2.4,0.3,bz+0.6,g);
+  }
+  if(id === "rex"){ // event posters + trophy
+    [["HACK","#14a8b4","#0f2a33"],["FINTECH","#ffffff","#e8961c"],["CAREER FAIR","#ffffff","#2f7fe0"]].forEach(([t,fg,bg],i) => {
+      const ps = textPlane(0.95,1.2,(c,w,h)=>{ c.fillStyle=bg; c.fillRect(0,0,w,h); c.fillStyle=fg; c.font="700 "+(t.length>6?44:64)+"px 'Chakra Petch', sans-serif"; c.textAlign="center"; c.fillText(t,w/2,h*0.45); c.font="500 28px 'JetBrains Mono', monospace"; c.fillText("SG · 2026",w/2,h*0.7); }, 256);
+      ps.position.set(-1.4+i*1.15,1.0,wz); g.add(ps);
+    });
+    cyl(0.12,0.2,0.12,lam(0xe8961c),1.15,1.0,0.75,g,12); cyl(0.14,0.06,0.22,lam(0xffc94d),1.15,1.17,0.75,g,12);
+  }
+  if(id === "juno"){ // framed code art + laptop stickers vibe
+    const art = textPlane(1.6,1.0,(c,w,h)=>{ c.fillStyle="#132030"; c.fillRect(0,0,w,h); c.fillStyle="#7bd389"; c.font="700 120px 'JetBrains Mono', monospace"; c.textAlign="center"; c.fillText("</>",w/2,h*0.62); }, 384);
+    art.position.set(-1.2,1.05,wz); g.add(art);
+    const gh = textPlane(1.4,0.8,(c,w,h)=>{ c.fillStyle="#fff"; c.fillRect(0,0,w,h); c.strokeStyle="#c4ceda"; c.lineWidth=8; c.strokeRect(0,0,w,h);
+      for(let r=0;r<5;r++) for(let k=0;k<12;k++){ const v=(r*7+k*5)%9; c.fillStyle=["#ebedf0","#c6e48b","#7bc96f","#239a3b","#196127"][v%5]; c.fillRect(14+k*21,16+r*24,17,17); } }, 280);
+    gh.position.set(1.0,1.05,wz); g.add(gh);
+  }
+  if(id === "lin"){ // month calendar + clock
+    const mc = textPlane(2.2,1.2,(c,w,h)=>{ c.fillStyle="#fff"; c.fillRect(0,0,w,h); c.fillStyle="#5a6b7d"; c.fillRect(0,0,w,54); c.fillStyle="#fff"; c.font="700 34px 'Chakra Petch', sans-serif"; c.fillText("WEEKENDS",20,40);
+      for(let r=0;r<4;r++) for(let k=0;k<7;k++){ const weekend=k>=5; c.fillStyle= weekend ? (r===2?"#fde0ea":"#d4f2e5") : "#f2f6fa"; c.fillRect(16+k*((w-32)/7),66+r*((h-80)/4),(w-32)/7-6,(h-80)/4-6); } }, 512);
+    mc.position.set(-0.6,1.0,wz); g.add(mc);
+    const ck = textPlane(0.6,0.6,(c,w,h)=>{ c.fillStyle="#fff"; c.beginPath(); c.arc(w/2,h/2,w/2-6,0,7); c.fill(); c.strokeStyle="#5a6b7d"; c.lineWidth=10; c.stroke(); c.strokeStyle="#132030"; c.lineWidth=8; c.beginPath(); c.moveTo(w/2,h/2); c.lineTo(w/2,h*0.22); c.moveTo(w/2,h/2); c.lineTo(w*0.72,h/2); c.stroke(); }, 160);
+    ck.position.set(1.5,1.1,wz); g.add(ck);
+  }
+  pods[id] = {g, screen, back, lamp};
+}
+
+/* Boss area */
+const bossG = new THREE.Group(); bossG.position.set(BOSS.x,0,BOSS.z); scene.add(bossG);
+box(6.2,0.03,4.4,lam(0xe8e1fd),0,0.015,0.6,bossG);
+box(4.0,0.12,1.6,lam(0xffffff),0,0.92,1.1,bossG);
+box(4.0,0.86,0.08,lam(0x7b5cff),0,0.44,1.86,bossG);
+for(const x of [-0.85,0.85]){ box(0.08,0.32,0.08,lam(0x3a4656),x,1.12,1.35,bossG); box(1.3,0.76,0.06,lam(0x2a3442),x,1.55,1.38,bossG).castShadow = false; box(0.8,0.06,0.02,glow(0x7b5cff),x,1.55,1.42,bossG); }
+box(1.1,0.12,1.0,lam(0x5a3fd0),0,0.55,-0.1,bossG); box(1.1,1.25,0.14,lam(0x5a3fd0),0,1.15,-0.62,bossG);
+cyl(0.42,0.42,0.05,lam(0x5b6c7e),0,0.03,-0.1,bossG,5); cyl(0.06,0.06,0.48,lam(0x5b6c7e),0,0.27,-0.1,bossG,10);
+const plate = textPlane(1.8,0.38, label("THE BOSS","#ffffff",80,"700 {s}px 'Chakra Petch', sans-serif"), 512);
+plate.position.set(0,0.58,1.905); bossG.add(plate);
+cyl(0.09,0.08,0.18,lam(0xf06a96),1.6,1.07,1.2,bossG,12);
+const bossLamp = new THREE.PointLight(0xb5a3ff, 0, 7); bossLamp.position.set(0,2.4,1.2); bossG.add(bossLamp);
+plant(-2.7,-1.0,1.1,bossG); plant(2.7,-1.0,1.1,bossG);
+
+/* Debrief table */
+const meet = new THREE.Group(); meet.position.set(MEET.x,0,MEET.z); scene.add(meet);
+box(5.6,0.03,5.4,lam(0xdfeaf6),0,0.015,0,meet);
+cyl(1.25,1.25,0.08,lam(0xffffff),0,0.88,0,meet,48); cyl(0.12,0.32,0.86,lam(0xc4ceda),0,0.43,0,meet,16);
+const meetRing = new THREE.Mesh(new THREE.TorusGeometry(1.25,0.03,6,64), glow(0x2f7fe0)); meetRing.rotation.x = Math.PI/2; meetRing.position.y = 0.88; meet.add(meetRing);
+SEATS.forEach(([x,z]) => { cyl(0.3,0.3,0.1,lam(0x2f7fe0),x,0.5,z,meet,18); cyl(0.05,0.05,0.48,lam(0x5b6c7e),x,0.25,z,meet,8); });
+const meetSign = textPlane(2.6,0.4, label("DEBRIEF TABLE","#5b6c7e",60), 640);
+meetSign.rotation.x = -Math.PI/2; meetSign.position.set(0,0.035,2.45); meet.add(meetSign);
+
+/* Lounge */
+const lounge = new THREE.Group(); lounge.position.set(-4.3,0,6.4); scene.add(lounge);
+box(4.6,0.03,2.8,lam(0xfbe9d2),0,0.015,0,lounge);
+box(3.2,0.5,1.0,lam(0x2f7fe0),0,0.3,-0.6,lounge); box(3.2,0.7,0.3,lam(0x2a6bc0),0,0.75,-1.0,lounge);
+box(0.3,0.65,1.0,lam(0x2a6bc0),-1.6,0.4,-0.6,lounge); box(0.3,0.65,1.0,lam(0x2a6bc0),1.6,0.4,-0.6,lounge);
+cyl(0.55,0.55,0.08,lam(0xffffff),0,0.45,0.6,lounge,32); cyl(0.06,0.06,0.42,lam(0xc4ceda),0,0.21,0.6,lounge,8);
+ball(0.12,0xe8961c,0.15,0.58,0.55,lounge); ball(0.1,0xe24c4c,-0.12,0.56,0.7,lounge);
+const bean = new THREE.Mesh(new THREE.SphereGeometry(0.55,20,14), lam(0xf06a96)); bean.scale.set(1,0.62,1); bean.position.set(1.9,0.32,0.7); bean.castShadow = true; lounge.add(bean);
+
+/* Pantry */
+const pantry = new THREE.Group(); pantry.position.set(10.4,0,4.4); scene.add(pantry);
+box(6.2,0.03,4.0,lam(0xfff1d6),0,0.015,0,pantry);
+box(4.4,0.95,1.0,lam(0xffffff),-0.3,0.475,-0.8,pantry); box(4.4,0.06,1.04,lam(0xe8961c),-0.3,0.98,-0.8,pantry);
+box(1.0,2.2,0.95,lam(0xe7ecf2),2.5,1.1,-0.8,pantry); box(0.05,0.7,0.05,lam(0x9aa8b6),2.05,1.4,-0.3,pantry);
+box(0.6,0.66,0.5,lam(0x2a3442),-1.8,1.34,-0.9,pantry); box(0.2,0.06,0.04,glow(0xe8961c),-1.8,1.52,-0.64,pantry);
+cyl(0.08,0.07,0.17,lam(0xffffff),-1.1,1.1,-0.7,pantry,12); cyl(0.08,0.07,0.17,lam(0xf06a96),-0.85,1.1,-0.65,pantry,12);
+cyl(0.34,0.22,0.16,lam(0xffffff),0.4,1.09,-0.8,pantry,16);
+for(const [x,c] of [[0.3,0xe8961c],[0.5,0xe24c4c],[0.4,0x1fae78]]) ball(0.11,c,x,1.22,-0.8+(x-0.4),pantry);
+for(const x of [-1.2,0.2,1.6]){ cyl(0.5,0.5,0.06,lam(0xffffff),x,0.75,0.9,pantry,24); cyl(0.05,0.05,0.72,lam(0xc4ceda),x,0.37,0.9,pantry,8); }
+const pantrySign = textPlane(2,0.4, label("PANTRY","#e8961c",70,"700 {s}px 'Chakra Petch', sans-serif"), 512);
+pantrySign.position.set(-0.3,0.5,-0.27); pantry.add(pantrySign);
+plant(LEFT+1.0,BACK+1.0,1.2); plant(14.2,0.6,1.1); plant(4.8,7.8,1.0);
+
+/* Characters (chibi, face +z) */
+function chibi({shirt, hair, style, boss=false}){
+  const root = new THREE.Group(), body = new THREE.Group(); root.add(body);
+  const skin = 0xf6d1b0;
+  cyl(0.3,0.38,0.62,lam(shirt),0,0.36,0,body,18);
+  for(const s of [-1,1]) cyl(0.11,0.11,0.32,lam(0x2a3442),0.14*s,0.0,0.06,body,10);
+  const arms = [];
+  for(const s of [-1,1]){
+    const a = new THREE.Group(); a.position.set(0.36*s,0.58,0); body.add(a);
+    box(0.14,0.14,0.48,lam(shirt),0,0,0.2,a); box(0.13,0.13,0.1,lam(skin),0,0,0.47,a);
+    arms.push(a);
+  }
+  const head = new THREE.Group(); head.position.y = 1.08; body.add(head);
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.46,32,24), lam(skin)); skull.castShadow = true; head.add(skull);
+  const eyeM = lam(0x14181f), whiteM = glow(0xffffff), blushM = new THREE.MeshBasicMaterial({color:0xff9fae, transparent:true, opacity:.75});
+  for(const s of [-1,1]){
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.085,14,12), eyeM); e.scale.set(1,1.3,0.6); e.position.set(0.16*s,0.0,0.42); head.add(e);
+    const hl = new THREE.Mesh(new THREE.SphereGeometry(0.024,8,6), whiteM); hl.position.set(0.16*s+0.028,0.045,0.47); head.add(hl);
+    const b = new THREE.Mesh(new THREE.CircleGeometry(0.075,16), blushM); b.position.set(0.26*s,-0.11,0.36); b.rotation.y = 0.55*s; head.add(b);
+  }
+  const mouth = new THREE.Mesh(new THREE.TorusGeometry(0.05,0.014,6,12,Math.PI), eyeM); mouth.position.set(0,-0.14,0.44); mouth.rotation.z = Math.PI; head.add(mouth);
+  const hm = lam(hair);
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.475,32,22,0,Math.PI*2,0,Math.PI*0.5), hm); cap.position.set(0,0.06,-0.02); cap.rotation.x = 0.42; cap.castShadow = true; head.add(cap);
+  const fringe = new THREE.Mesh(new THREE.BoxGeometry(0.62,0.14,0.16), hm); fringe.position.set(0,0.33,0.3); fringe.rotation.x = 0.5; head.add(fringe);
+  if(style === "spiky") for(let i=0;i<5;i++){ const c = new THREE.Mesh(new THREE.ConeGeometry(0.1,0.28,8), hm); c.position.set(-0.24+i*0.12,0.46,-0.05+((i%2)*0.08)); c.rotation.x = -0.3; head.add(c); }
+  if(style === "bun"){ const b = new THREE.Mesh(new THREE.SphereGeometry(0.17,16,12), hm); b.position.set(0,0.52,-0.12); head.add(b); }
+  if(style === "side"){ const s = new THREE.Mesh(new THREE.BoxGeometry(0.3,0.1,0.5), hm); s.position.set(0.2,0.42,0.05); s.rotation.z = -0.3; head.add(s);
+    const gl = new THREE.Mesh(new THREE.TorusGeometry(0.1,0.015,6,16), lam(0x132030)); for(const x of [-0.16,0.16]){ const r = gl.clone(); r.position.set(x,0.0,0.46); head.add(r); } }
+  if(style === "pony"){ const p = new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.05,0.5,10), hm); p.position.set(0,0.05,-0.48); p.rotation.x = 0.5; head.add(p); const t = new THREE.Mesh(new THREE.SphereGeometry(0.1,10,8), lam(0xf06a96)); t.position.set(0,0.28,-0.42); head.add(t); }
+  if(style === "bob"){ const bk = new THREE.Mesh(new THREE.BoxGeometry(0.98,0.5,0.5), hm); bk.position.set(0,-0.08,-0.16); head.add(bk);
+    for(const s of [-1,1]){ const side = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.46,0.42), hm); side.position.set(0.44*s,-0.1,0.08); head.add(side); } }
+  if(style === "curly") for(let i=0;i<9;i++){ const a = i/9*Math.PI*2; const c = new THREE.Mesh(new THREE.SphereGeometry(0.15,10,8), hm); c.position.set(Math.cos(a)*0.34,0.3+((i%2)*0.08),Math.sin(a)*0.3-0.04); head.add(c); }
+  if(style === "beanie"){ const bn = new THREE.Mesh(new THREE.SphereGeometry(0.5,24,16,0,Math.PI*2,0,Math.PI*0.48), lam(0xe8961c)); bn.position.set(0,0.1,-0.02); bn.rotation.x = 0.3; head.add(bn);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.47,0.06,8,28), lam(0xc77712)); rim.rotation.x = Math.PI/2 - 0.3; rim.position.set(0,0.12,0.02); head.add(rim);
+    const pom = new THREE.Mesh(new THREE.SphereGeometry(0.1,10,8), lam(0xffffff)); pom.position.set(0,0.6,-0.12); head.add(pom); }
+  if(style === "long"){ const bk = new THREE.Mesh(new THREE.BoxGeometry(0.86,0.8,0.3), hm); bk.position.set(0,-0.18,-0.2); head.add(bk);
+    for(const s of [-1,1]){ const side = new THREE.Mesh(new THREE.BoxGeometry(0.14,0.62,0.3), hm); side.position.set(0.42*s,-0.18,0.04); head.add(side); } }
+  if(boss){
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.5,0.03,6,24,Math.PI), lam(0x2a3442)); band.position.y = 0.05; head.add(band);
+    for(const s of [-1,1]){ const cup = cyl(0.11,0.11,0.08,lam(0x7b5cff),0.49*s,0.02,0,head,14); cup.rotation.z = Math.PI/2; }
+    box(0.03,0.03,0.3,lam(0x2a3442),-0.46,-0.14,0.18,head);
+  }
+  root.scale.setScalar(SCALE);
+  root.userData = {body, head, arms};
+  return root;
+}
+
+const people = {}, clickables = [];
+function addHit(obj, id){
+  const hit = new THREE.Mesh(new THREE.BoxGeometry(1.4,2.2,1.4), new THREE.MeshBasicMaterial({visible:false}));
+  hit.position.y = 1.0; hit.userData.id = id; obj.add(hit); clickables.push(hit);
+}
+function floorRing(color){
+  const r = new THREE.Mesh(new THREE.RingGeometry(0.85,1.0,48), new THREE.MeshBasicMaterial({color, side:THREE.DoubleSide, transparent:true, opacity:.9}));
+  r.rotation.x = -Math.PI/2; scene.add(r); return r;
+}
+const BASE_Y = 0.42;
+for(const id of ORDER){
+  const d = DESKS[id];
+  const c = chibi({shirt:d.shirt, hair:d.hair, style:d.style});
+  const deskPos = new THREE.Vector3(d.x, BASE_Y, d.z-0.7);
+  c.position.copy(deskPos); scene.add(c); addHit(c, id);
+  people[id] = {c, ring:floorRing(0x2f7fe0), deskPos, pos:deskPos.clone(), facing:0, seatIdx:ORDER.indexOf(id)};
+}
+const bossChar = chibi({shirt:0x2a2340, hair:0x1c130e, style:"long", boss:true});
+const BOSS_POS = new THREE.Vector3(BOSS.x, BASE_Y+0.02, BOSS.z-0.1);
+bossChar.position.copy(BOSS_POS); scene.add(bossChar); addHit(bossChar, "boss");
+const bossRing = floorRing(0x7b5cff); bossRing.position.set(BOSS_POS.x,0.06,BOSS_POS.z);
+
+/* Bubbles */
+const bubbleEls = {};
+const bubbleLayer = $("#bubbles");
+for(const id of [...ORDER, "boss"]){
+  const b = document.createElement("button"); b.className = "bubble" + (id==="boss" ? " boss" : ""); b.type = "button";
+  b.addEventListener("click", () => select(id)); bubbleLayer.appendChild(b); bubbleEls[id] = b;
+}
+
+/* ---------- Camera: fit, pan, zoom, focus ---------- */
+let baseView = 8;
+function resize(){
+  const w = innerWidth, h = innerHeight; if(!w || !h) return;
+  renderer.setSize(w,h,false);
+  const aspect = w/h;
+  baseView = aspect < 1 ? 8.2/aspect : Math.max(15.5/aspect, 7.4);
+  cam.left = -baseView*aspect; cam.right = baseView*aspect; cam.top = baseView; cam.bottom = -baseView; cam.updateProjectionMatrix();
+  const top = document.querySelector(".top").getBoundingClientRect().bottom;
+  document.documentElement.style.setProperty("--sheet-top", Math.round(top + 12) + "px");
+}
+addEventListener("resize", resize); resize();
+const upp = () => (cam.right - cam.left) / (zoom * innerWidth);   // world units per pixel
+const clampTarget = v => { v.x = Math.max(-14, Math.min(14, v.x)); v.z = Math.max(-6.5, Math.min(14, v.z)); return v; };
+function homeView(){ wantTarget.set(-0.5,1,2.6); wantZoom = isPhone() ? 0.95 : 0.74; }
+homeView(); target.copy(wantTarget);
+function focusOn(pos, z){
+  wantZoom = z ?? (isPhone() ? 2.1 : 1.7);
+  // where on screen the point should land (leave room for the drawer / sheet)
+  const ox = !isPhone() && selected ? -200 : 0;
+  const oy = isPhone() && selected ? -innerHeight*0.24 : 40;
+  const u = (cam.right - cam.left) / (wantZoom * innerWidth);
+  wantTarget.copy(pos).setY(1)
+    .addScaledVector(RIGHT, -ox*u)
+    .addScaledVector(FWD, oy*u/SIN_P);
+  clampTarget(wantTarget);
+}
+const zoomBy = f => { wantZoom = Math.max(0.6, Math.min(4, wantZoom * f)); };
+$("#zin").addEventListener("click", () => zoomBy(1.35));
+$("#zout").addEventListener("click", () => zoomBy(1/1.35));
+$("#home").addEventListener("click", () => { closeSheet(); homeView(); });
+$("#team").addEventListener("click", () => select("boss"));
+canvas.addEventListener("wheel", e => { e.preventDefault(); zoomBy(Math.exp(-e.deltaY*0.0015)); }, {passive:false});
+
+const pointers = new Map(); let pinchStart = null, moved = 0;
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
+canvas.addEventListener("pointerdown", e => {
+  canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  moved = 0; canvas.classList.add("dragging");
+  if(pointers.size === 2){ const [a,b] = [...pointers.values()]; pinchStart = {d:Math.hypot(a.x-b.x,a.y-b.y), z:wantZoom}; }
+});
+canvas.addEventListener("pointermove", e => {
+  const p = pointers.get(e.pointerId); if(!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
+  if(pointers.size === 1){
+    moved += Math.abs(dx) + Math.abs(dy);
+    const u = upp();
+    wantTarget.addScaledVector(RIGHT, -dx*u).addScaledVector(FWD, dy*u/SIN_P); clampTarget(wantTarget);
+    target.copy(wantTarget);
+  } else if(pointers.size === 2 && pinchStart){
+    moved += 20;
+    const [a,b] = [...pointers.values()];
+    wantZoom = Math.max(0.6, Math.min(4, pinchStart.z * Math.hypot(a.x-b.x,a.y-b.y) / pinchStart.d)); zoom = wantZoom;
+  }
+});
+function endPointer(e){
+  const wasTap = pointers.size === 1 && moved < 8;
+  pointers.delete(e.pointerId); if(pointers.size < 2) pinchStart = null;
+  if(!pointers.size) canvas.classList.remove("dragging");
+  if(wasTap && e.type === "pointerup"){
+    ptr.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);
+    ray.setFromCamera(ptr, cam);
+    const hit = ray.intersectObjects(clickables,false)[0];
+    if(hit) select(hit.object.userData.id);
+  }
+}
+canvas.addEventListener("pointerup", endPointer); canvas.addEventListener("pointercancel", endPointer);
+
+/* Day / night on Singapore time */
+let isNight = null;
+const nightNow = () => { const h = sgNow().getUTCHours(); return h >= 19 || h < 7; };
+function applyTime(){
+  const night = nightNow();
+  if(night === isNight) return; isNight = night;
+  hemi.intensity = night ? 0.42 : 0.8;
+  hemi.color.setHex(night ? 0xbfc9ff : 0xffffff);
+  sun.intensity = night ? 0.12 : 0.75;
+  scene.background = new THREE.Color(night ? 0x16203a : 0xcfe2f3);
+  document.body.style.background = night ? "#16203a" : "";
+  for(const id of ORDER) pods[id].lamp.intensity = night ? 1.3 : 0;
+  bossLamp.intensity = night ? 1.4 : 0;
+  skyline.userData.redraw(night);
+}
+
+/* Animation */
+const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const v3 = new THREE.Vector3();
+const atMeeting = w => !!(w && w.status === "done" && w.lastRun && (Date.now() - w.lastRun) < 20*60e3);
+function placeBubble(el, obj){
+  obj.getWorldPosition(v3); v3.y += 0.62*SCALE + 0.35; v3.project(cam);
+  const x = (v3.x+1)/2*innerWidth, y = (-v3.y+1)/2*innerHeight;
+  el.style.left = x + "px"; el.style.top = y + "px";
+  el.style.visibility = (x < -60 || x > innerWidth+60 || y < 0 || y > innerHeight+80) ? "hidden" : "";
+}
+let last = performance.now();
+let unread = {};
+function frame(t){
+  const dt = Math.min(0.05,(t-last)/1000); last = t; const s = t/1000;
+  const k = reduce ? 1 : Math.min(1, dt*7);
+  target.lerp(wantTarget, k); zoom += (wantZoom - zoom) * k;
+  cam.zoom = zoom; cam.updateProjectionMatrix();
+  cam.position.copy(target).add(CAM_OFF); cam.lookAt(target);
+  bubbleLayer.classList.toggle("far", zoom < (isPhone() ? 1.5 : 0.95));
+
+  for(const id of ORDER){
+    const P = people[id], w = workers[id], st = w?.status || "idle", ud = P.c.userData;
+    let tgt = P.deskPos, face = 0;
+    if(atMeeting(w)){
+      const [sx,sz] = SEATS[P.seatIdx];
+      tgt = new THREE.Vector3(MEET.x + sx, BASE_Y, MEET.z + sz);
+      face = Math.atan2(MEET.x - tgt.x, MEET.z - tgt.z);
+    }
+    const dist = P.pos.distanceTo(tgt), walking = dist > 0.05;
+    if(walking){
+      const dir = tgt.clone().sub(P.pos).normalize();
+      P.pos.addScaledVector(dir, Math.min(dist, (reduce ? 100 : 3.2)*dt));
+      P.facing = Math.atan2(dir.x, dir.z);
+      P.c.position.set(P.pos.x, BASE_Y + Math.abs(Math.sin(s*10))*0.08, P.pos.z);
+    } else {
+      P.pos.copy(tgt);
+      let diff = face - P.facing; diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+      P.facing += diff * Math.min(1, dt*6);
+      const working = st === "working" && !reduce;
+      P.c.position.set(P.pos.x, BASE_Y + (working ? Math.abs(Math.sin(s*7))*0.04 : (reduce ? 0 : Math.sin(s*1.4+id.length)*0.015)), P.pos.z);
+    }
+    P.c.rotation.y = P.facing;
+    const typing = st === "working" && !walking && !reduce;
+    ud.arms.forEach((a,i) => a.rotation.x = typing ? Math.sin(s*16+i*Math.PI)*0.25 : (walking && !reduce ? Math.sin(s*10+i*Math.PI)*0.5 : 0));
+    ud.head.rotation.y = st === "paused" ? 0.6 : (typing ? Math.sin(s*2)*0.1 : (reduce ? 0 : Math.sin(s*0.6+id.length)*0.12));
+    ud.head.rotation.z = st === "paused" ? 0.25 : 0;
+    const col = STATUS_HEX[st] ?? STATUS_HEX.idle, fresh = unread[id];
+    P.ring.position.set(P.pos.x, 0.05, P.pos.z);
+    P.ring.material.color.setHex(fresh ? 0xf0a020 : col);
+    P.ring.material.opacity = (st === "working" || fresh) && !reduce ? 0.55 + Math.sin(s*5)*0.35 : 0.9;
+    P.ring.scale.setScalar(selected === id ? 1.15 : 1);
+    pods[id].screen.material.color.setHex(st === "paused" ? 0x1a2230 : col);
+    pods[id].back.material.color.setHex(col);
+    placeBubble(bubbleEls[id], ud.head);
+  }
+  bossChar.position.y = BOSS_POS.y + (reduce ? 0 : Math.sin(s*1.2)*0.015);
+  bossChar.userData.head.rotation.y = reduce ? 0 : Math.sin(s*0.5)*0.25;
+  bossRing.scale.setScalar(selected === "boss" ? 1.15 : 1);
+  meetRing.material.color.setHex(ORDER.some(id => atMeeting(workers[id])) ? 0x1fae78 : 0x2f7fe0);
+  placeBubble(bubbleEls.boss, bossChar.userData.head);
+  renderer.render(scene,cam);
+  requestAnimationFrame(frame);
+}
+applyTime();
+requestAnimationFrame(frame);
+
+/* ---------- UI ---------- */
+function renderClock(){
+  const d = sgNow();
+  $("#clock").textContent = d.toLocaleTimeString("en-SG",{timeZone:"UTC",hour:"numeric",minute:"2-digit"}) + " SGT · " + (nightNow() ? "night" : "day");
+}
+function renderLive(){
+  if(!db) return;
+  const working = ORDER.filter(id => workers[id]?.status === "working").length;
+  const fresh = ORDER.filter(isNew).length;
+  $("#live").innerHTML = `<span class="dot ${working ? "working" : "done"}"></span>${working ? `${working} working` : fresh ? `${fresh} new report${fresh>1?"s":""}` : "All quiet"}`;
+}
+function renderOps(){
+  const kai = workers.kai, mira = workers.mira, theo = workers.theo, ava = workers.ava;
+  const wk = hoursByWeek(ava?.shifts), mh = monthHours(ava?.shifts);
+  const roles = runsOf("kai").filter(r => r.status === "done").slice(-7).map(rolesFound);
+  const dl = nextDeadline(theo?.projects);
+  const quizzes = runsOf("mira").filter(r => r.status === "done").length;
+  const tile = (id, key, color, v, sub, chart="") => `<button class="tile" data-id="${id}" type="button">
+      <span class="k"><span class="sw" style="background:${color}"></span>${key}</span>
+      <span class="v">${v}</span>${chart}<span class="s">${sub}</span></button>`;
+  $("#ops").innerHTML =
+    tile("ava","Hours/wk","#f06a96", `${nice(wk[wk.length-1])}<small>h</small>`, ava ? (Number(ava.hourlyRate) ? `≈ $${Math.round(mh.total*Number(ava.hourlyRate))} this month` : `${nice(mh.total)} h this month`) : "Loading…", bars(wk,"#f06a96")) +
+    tile("kai","Roles","#2f7fe0", `${roles.length ? roles[roles.length-1] : "—"}`, jobs.length ? `${jobs.filter(j=>["applied","interview","offer"].includes(j.status)).length} applied · ${jobs.length} tracked` : (roles.length ? `${roles.reduce((a,b)=>a+b,0)} found` : "No scouting yet"), roles.length > 1 ? bars(roles,"#2f7fe0") : "") +
+    tile("theo","Deadline","#1fae78", dl ? `${dl.days}<small>days</small>` : "—", dl ? esc(dl.name) : "No dated deadlines") +
+    (() => { const ex = nextExam(); return ex
+      ? tile("mira","Next exam","#7b5cff", `${ex.days}<small>days</small>`, esc(ex.name))
+      : tile("mira","Quizzes","#7b5cff", `${quizzes}`, mira ? "Add exam dates on Mira's desk" : "Loading…"); })();
+  $("#ops").querySelectorAll(".tile").forEach(t => t.addEventListener("click", () => select(t.dataset.id)));
+  wallScreen.userData.redraw([
+    {title:"NEXT DEADLINE", color:"#36d399", big: dl ? `${dl.days} days` : "—", lines: dl ? [dl.name] : ["Nothing dated yet"]},
+    {title:"HOURS · MONTH", color:"#ff8fb1", big: `${nice(mh.total)} h`, lines:[`${mh.count} shifts logged`]},
+    {title:"ROLES FOUND", color:"#6cb4ff", big: roles.length ? `${roles[roles.length-1]}` : "—", lines: kai?.bubble ? [kai.bubble] : []},
+  ]);
+  resize();
+}
+function renderBubbles(){
+  for(const id of ORDER){
+    const w = workers[id], b = bubbleEls[id], st = w?.status || "idle";
+    b.classList.toggle("sel", selected === id); b.classList.toggle("new", isNew(id) && selected !== id);
+    b.innerHTML = w ? `<b><span class="dot ${st}"></span>${esc(w.name)}${isNew(id) ? '<span class="badge">NEW</span>' : ""}</b><span class="l">${esc(atMeeting(w) ? "Debriefing. Report's in!" : (w.bubble || STATUS_LABEL[st]))}</span>` : `<b>${esc(DESKS[id].dept)}</b><span class="l">Loading…</span>`;
+    if(w) b.setAttribute("aria-label", `${w.name}, ${w.role}. ${STATUS_LABEL[st]}`);
+  }
+  bubbleEls.boss.classList.toggle("sel", selected === "boss");
+  bubbleEls.boss.innerHTML = `<b>You</b><span class="l">The boss</span>`;
+}
+function bossPanel(){
+  const list = ORDER.map(id => [id, workers[id]]).filter(([,w]) => w);
+  return `
+    <div class="eyebrow">Team view</div>
+    <div class="who"><div class="avatar" style="background:#7b5cff">★</div><div><h2>You, the boss</h2><p>Running ${list.length} AI staff</p></div></div>
+    ${list.length ? `<ul class="roster">${list.map(([id,w]) => { const st = w.status||"idle"; return `<li><button data-id="${id}" type="button">
+      <span class="avatar" style="background:${hex(DESKS[id].color)}">${DESKS[id].initials}</span>
+      <span><b>${esc(w.name)} · ${esc(w.role)}${isNew(id) ? ' <span class="badge">NEW</span>' : ""}</b><span class="sub">${esc(w.bubble || "")}</span></span>
+      <span class="pill"><span class="dot ${st}"></span>${esc(w.lastRun ? ago(w.lastRun) : STATUS_LABEL[st])}</span></button></li>`; }).join("")}</ul>` : `<p class="empty">Your team shows up here once the page connects. Open it in claude.ai.</p>`}
+    <p class="note">Yellow NEW badges mean a fresh report you haven't opened yet.</p>
+    ${sampleFn ? `<hr><div class="section"><div class="eyebrow">Ask the office</div>
+      <textarea id="askQ" placeholder="e.g. Am I free on Sat 8 Nov? · What should I apply to first?">${esc(askState.q)}</textarea>
+      <div class="btns"><button class="primary" id="askBtn" type="button" ${askState.busy ? "disabled" : ""}>${askState.busy ? "Thinking…" : "Ask"}</button>${askState.busy ? `<button id="askStop" type="button">Stop</button>` : ""}</div>
+      ${askState.text || askState.busy ? `<div class="answer" id="askA">${askState.text ? md(askState.text) : "Thinking…"}</div>` : ""}
+      ${askState.err ? `<div class="msg err">${esc(askState.err)}</div>` : ""}
+      <p class="note">In the demo, answers come from canned sample data. In the real office, Claude answers from everything the workers have filed.</p></div>` : ""}
+    <hr><div class="section"><div class="eyebrow">Sunday digest${office.digest?.lastRun ? " · " + esc(ago(office.digest.lastRun)) : ""}</div>
+      ${office.digest?.reportBody ? `<div class="report">${md(office.digest.reportBody)}</div>` : `<p class="empty">Your first digest lands Sunday night, after Ava finishes.</p>`}</div>`;
+}
+function shiftsHtml(list){
+  const mh = monthHours(list);
+  const recent = [...list].sort((a,b) => String(b.date).localeCompare(String(a.date))).slice(0,8);
+  const day = d => { const t = Date.parse(d+"T00:00:00Z"); return isNaN(t) ? esc(d) : new Date(t).toLocaleDateString("en-SG",{timeZone:"UTC",weekday:"short",day:"numeric",month:"short"}); };
+  const rate = Number(workers.ava?.hourlyRate) || 0;
+  const pay = rate ? `<div class="note">≈ $${(mh.total*rate).toFixed(2)} this month at $${rate}/h · estimate before deductions, check your payslip</div>` : `<div class="note">Leave Ava a note with your hourly rate (e.g. “my rate is $10.50/h”) to see a pay estimate.</div>`;
+  return `<hr><div class="section">
+    <div class="eyebrow">Hours this month</div>
+    <div class="big">${nice(mh.total)} h <span style="font-family:var(--body);font-weight:400;font-size:13px;color:var(--mute)">across ${mh.count} shift${mh.count===1?"":"s"}</span></div>
+    ${pay}
+    ${db ? (() => { const lastS = [...list].pop(); return `<div class="row">
+      <label class="field">Date<input type="date" id="sDate" value="${lastSaturday()}"></label>
+      <label class="field">Start<input type="time" id="sStart" value="${esc(lastS?.start || "10:00")}"></label>
+      <label class="field">End<input type="time" id="sEnd" value="${esc(lastS?.end || "18:00")}"></label>
+      <label class="field" style="flex-basis:70px">Break (min)<input type="number" id="sBreak" min="0" step="15" value="${lastS?.breakMins ?? 60}"></label>
+      <button class="primary" id="logShift" type="button">Log shift</button></div>`; })() : ""}
+    ${recent.length ? `<ul class="hist">${recent.map(x => `<li><span class="dot done"></span><div style="display:flex;justify-content:space-between;gap:8px;align-items:start"><div><time>${day(x.date)}</time>${esc(x.start||"")}${x.end ? "–"+esc(x.end) : ""} · ${esc(x.hours)} h${x.note ? " · "+esc(x.note) : ""}</div>${db ? `<button class="mini" type="button" data-delshift="${esc(x.date)}|${esc(x.start)}" aria-label="Delete shift on ${day(x.date)}">✕</button>` : ""}</div></li>`).join("")}</ul>` : `<p class="empty">No shifts logged yet. Use the form above, or leave Ava a note.</p>`}
+  </div>`;
+}
+function renderPanel(){
+  const id = selected, el = $("#panel");
+  if(!id) return;
+  const draft = $("#orderText"), keep = draft && draft.dataset.w === id ? draft.value : "";
+  const hadFocus = draft && document.activeElement === draft;
+  if(id === "boss"){
+    const qv = $("#askQ")?.value; if(qv !== undefined) askState.q = qv;
+    el.innerHTML = bossPanel();
+    el.querySelectorAll(".roster button").forEach(b => b.addEventListener("click", () => select(b.dataset.id)));
+    $("#askBtn")?.addEventListener("click", askOffice);
+    $("#askStop")?.addEventListener("click", () => askCtl?.abort());
+    return;
+  }
+  const w = workers[id], d = DESKS[id];
+  if(!w){ el.innerHTML = `<div class="eyebrow">${esc(d.dept)} pod</div><p class="empty">This desk's file shows up once the page connects. Open it in claude.ai.</p>`; return; }
+  const st = w.status || "idle";
+  const myRuns = runs.filter(r => r.workerId === id).sort((a,b)=>b.at-a.at).slice(0,6);
+  const myOrders = orders.filter(o => o.workerId === id).sort((a,b)=>b.createdAt-a.createdAt).slice(0,5);
+  const canAct = !!mcp && !!w.triggerId;
+  el.innerHTML = `
+    <div class="eyebrow">${esc(d.dept)} pod</div>
+    <div class="who"><div class="avatar" style="background:${hex(d.color)}">${esc(d.initials)}</div><div><h2>${esc(w.name)}</h2><p>${esc(w.role)}</p></div></div>
+    <div><span class="pill"><span class="dot ${st}"></span>${esc(atMeeting(w) ? "Finished · at the debrief table" : STATUS_LABEL[st])}</span></div>
+    <dl>
+      <dt>Job</dt><dd>${esc(w.job)}</dd>
+      <dt>Schedule</dt><dd>${esc(w.scheduleText || "—")}</dd>
+      <dt>Next shift</dt><dd>${st==="paused" ? "Paused" : esc(fmt(nextRun(w.schedule)))}</dd>
+      <dt>Last shift</dt><dd>${w.lastRun ? `${esc(fmt(w.lastRun))} <span style="color:var(--mute)">· ${esc(ago(w.lastRun))}</span>` : "Not yet"}</dd>
+    </dl>
+    <div class="btns">
+      <button class="primary" id="runNow" type="button" ${canAct && st!=="working" ? "" : "disabled"}>Start shift now</button>
+      <button id="toggle" type="button" ${canAct ? "" : "disabled"}>${st==="paused" ? "Back from leave" : "Send on leave"}</button>
+    </div>
+    ${!mcp ? `<p class="note">Buttons need the Claude Code Remote connector, which only works when you open this page in claude.ai.</p>` : ""}
+    ${flash ? `<div class="msg ${flash.err?"err":""}">${esc(flash.text)}</div>` : ""}
+    ${extraHtml(id, w)}
+    <hr>
+    <div class="section"><div class="eyebrow">${id === "mira" && w.quiz ? "Mira's notes" : "Latest report"}</div>
+      ${w.reportBody ? `<div class="report">${md(w.reportBody)}</div>` : `<p class="empty">No report yet. Tap “Start shift now” to get the first one.</p>`}
+    </div>
+    <hr>
+    <div class="section">
+      <div class="eyebrow">Give ${esc(w.name)} instructions</div>
+      <textarea id="orderText" placeholder="${esc(w.placeholder || "e.g. focus on X this time")}"></textarea>
+      <div class="btns">
+        <button class="primary" id="orderRun" type="button" ${canAct && st!=="working" ? "" : "disabled"}>Run now with this</button>
+        <button id="orderNote" type="button" ${db ? "" : "disabled"}>Leave note for next shift</button>
+      </div>
+      <p class="note">“Run now” starts a shift straight away with your instruction. A note waits on the desk for the next shift.</p>
+      ${myOrders.length ? `<ul class="orders">${myOrders.map(o => `<li>${esc(o.text)}<div class="r">${o.status==="done" ? "Done" + (o.reply ? ": " + esc(o.reply) : "") : "Waiting for next shift"} · ${esc(ago(o.createdAt))}</div></li>`).join("")}</ul>` : ""}
+    </div>
+    <hr>
+    <div class="section"><div class="eyebrow">Recent shifts</div>
+      ${myRuns.length ? `<ul class="hist">${myRuns.map(r => `<li><span class="dot ${esc(r.status)}"></span><div><time>${esc(fmt(r.at))}</time>${esc(r.summary||"")}</div></li>`).join("")}</ul>` : `<p class="empty">No shifts logged yet.</p>`}
+    </div>`;
+  const t = $("#orderText"); t.dataset.w = id; t.value = keep; if(hadFocus) t.focus();
+  $("#runNow").addEventListener("click", () => runNow(id, null));
+  $("#toggle").addEventListener("click", () => toggleLeave(id));
+  $("#orderRun").addEventListener("click", () => { const v = $("#orderText").value.trim(); if(v) runNow(id, v); });
+  $("#orderNote").addEventListener("click", () => leaveNote(id));
+  wireExtra(id);
+}
+const todaySG = () => sgNow().toISOString().slice(0,10);
+function daysUntil(d){ if(!d) return null; const t = Date.parse(d+"T00:00:00Z"), n = Date.parse(todaySG()+"T00:00:00Z"); if(isNaN(t)) return null; const k = Math.round((t-n)/864e5); return k < 0 ? null : k; }
+function nextExam(){ const subs = workers.mira?.subjects || []; return subs.map(s => ({name:s.name, days:daysUntil(s.examDate)})).filter(x => x.days !== null).sort((a,b)=>a.days-b.days)[0] || null; }
+const isNew = id => { const w = workers[id]; return !!(w && w.lastRun && w.status !== "working" && (!seen[id] || (seen[id].at||0) < w.lastRun)); };
+function markSeen(id){ if(db && isNew(id)) db.doc("seen/"+id).set({at: Date.now()}).catch(()=>{}); }
+const fmtDay = d => { const t = Date.parse(String(d)+"T00:00:00Z"); return isNaN(t) ? esc(d) : new Date(t).toLocaleDateString("en-SG",{timeZone:"UTC",weekday:"short",day:"numeric",month:"short"}); };
+
+/* Kai: job pipeline */
+const JOB_STATES = [["new","New"],["saved","Saved"],["applied","Applied"],["interview","Interview"],["offer","Offer"],["rejected","Not for me"]];
+function jobsHtml(){
+  if(!db) return "";
+  const order = Object.fromEntries(JOB_STATES.map(([k],i)=>[k,i]));
+  const list = [...jobs].sort((a,b) => (order[a.status]??0) - (order[b.status]??0) || (b.foundAt||0) - (a.foundAt||0));
+  const active = list.filter(j => j.status !== "rejected");
+  const shown = showAllJobs ? list : active.slice(0,10);
+  const n = k => jobs.filter(j => j.status === k).length;
+  return `<hr><div class="section">
+    <div class="eyebrow">Job pipeline</div>
+    <div class="counts">${JOB_STATES.slice(1,5).map(([k,l]) => `<span class="pill">${l} · ${n(k)}</span>`).join("")}</div>
+    ${shown.length ? `<ul class="list">${shown.map(j => `<li class="item"><div style="min-width:0"><b>${esc(j.title)}</b><span class="meta">${esc(j.company||"")}${j.foundAt ? " · found "+esc(ago(j.foundAt)) : ""}</span>${j.url ? `<br><a href="${esc(j.url)}" target="_blank" rel="noopener">Open listing</a>` : ""}</div>
+      <div class="acts"><select class="status" data-job="${esc(j._id)}" aria-label="Status for ${esc(j.title)}">${JOB_STATES.map(([k,l]) => `<option value="${k}" ${j.status===k?"selected":""}>${l}</option>`).join("")}</select></div></li>`).join("")}</ul>`
+      : `<p class="empty">No roles yet. Kai adds new ones to this list every shift.</p>`}
+    ${list.length > shown.length || showAllJobs ? `<button class="mini" id="jobsAll" type="button">${showAllJobs ? "Show active only" : `Show all ${list.length}`}</button>` : ""}
+  </div>`;
+}
+/* Rex: events with Going / Skip */
+function eventsHtml(){
+  if(!db) return "";
+  const t = todaySG();
+  const up = events.filter(e => true || t).sort((a,b) => String(a.start).localeCompare(String(b.start)));
+  return `<hr><div class="section">
+    <div class="eyebrow">Upcoming events · ${up.filter(e=>e.going==="going").length} going</div>
+    ${up.length ? `<ul class="list">${up.map(e => `<li class="item"><div style="min-width:0"><b>${esc(e.title)}</b><span class="meta">${fmtDay(e.start)}${e.end && e.end !== e.start ? " – "+fmtDay(e.end) : ""}${e.time ? " · "+esc(e.time) : ""} · ${esc(e.price||"")}${e.weekend ? " · ⚠️ weekend" : ""}</span>${e.url ? `<br><a href="${esc(e.url)}" target="_blank" rel="noopener">Details</a>` : ""}</div>
+      <div class="acts"><span class="seg"><button type="button" data-ev="${esc(e._id)}" data-v="going" aria-pressed="${e.going==="going"}">Going</button><button type="button" class="skip" data-ev="${esc(e._id)}" data-v="skip" aria-pressed="${e.going==="skip"}">Skip</button></span></div></li>`).join("")}</ul>`
+      : `<p class="empty">No upcoming events saved yet. Rex adds them every Saturday.</p>`}
+    <p class="note">Nova plans your week around events marked Going, and Lin keeps those weekends free.</p>
+  </div>`;
+}
+/* Mira: playable quiz + topic editor */
+function quizHtml(w){
+  const qz = w.quiz; if(!qz || !Array.isArray(qz.questions) || !qz.questions.length) return "";
+  const saved = attempts[qz.id];
+  const picks = quizPicks[qz.id] || (quizPicks[qz.id] = saved ? [...saved.answers] : Array(qz.questions.length).fill(null));
+  const done = picks.every(p => p !== null);
+  const score = picks.reduce((a,p,i) => a + (p === qz.questions[i].answer ? 1 : 0), 0);
+  return `<hr><div class="section">
+    <div class="eyebrow">This week's quiz · ${esc(qz.subject||"")}</div>
+    ${done ? `<div class="score">${score} / ${qz.questions.length}</div>` : `<p class="note">Tap an answer to check it. Your score goes back to Mira so the next quiz targets your weak spots.</p>`}
+    ${qz.questions.map((q,i) => { const p = picks[i]; return `<div class="q"><span class="tp">Q${i+1}${q.topic ? " · "+esc(q.topic) : ""}</span><div class="qt">${esc(q.q)}</div>
+      <div class="opts">${(q.options||[]).map((o,k) => { const cls = p === null ? "" : (k === q.answer ? "right" : (k === p ? "wrong" : "")); return `<button type="button" class="${cls}" data-q="${i}" data-k="${k}" ${p !== null ? "disabled" : ""}>${"ABCD"[k]}) ${esc(o)}</button>`; }).join("")}</div>
+      ${p !== null && q.why ? `<div class="why">${p === q.answer ? "✓ " : "✗ "}${esc(q.why)}</div>` : ""}</div>`; }).join("")}
+  </div>`;
+}
+function topicsHtml(w){
+  if(!db) return "";
+  const subs = Array.isArray(w.subjects) ? w.subjects : [];
+  return `<hr><div class="section">
+    <div class="eyebrow">What's being tested</div>
+    <p class="note">Mira only quizzes the highlighted topics. Tap a topic to switch it on or off. Add exam dates and she'll quiz twice a week in the 3 weeks before.</p>
+    ${subs.map((sb,si) => { const dl = daysUntil(sb.examDate); return `<div class="subj"><header><b>${esc(sb.name)}</b><button class="mini" type="button" data-delsub="${si}" aria-label="Remove ${esc(sb.name)}">Remove</button></header>
+      <label class="field" style="flex-direction:row;align-items:center;gap:8px">Exam date<input type="date" data-exam="${si}" value="${esc(sb.examDate||"")}" style="width:auto;flex:1">${dl !== null ? `<span class="pill">${dl === 0 ? "today" : dl + " days"}</span>` : ""}</label>
+      <div class="chipset">${(sb.topics||[]).map((t,ti) => `<button type="button" class="tchip" data-s="${si}" data-t="${ti}" aria-pressed="${!!t.on}">${esc(t.name)}</button>`).join("")}</div>
+      <div class="inline"><input id="addt-${si}" placeholder="Add a topic" aria-label="Add a topic to ${esc(sb.name)}"><button class="mini" type="button" data-addt="${si}">Add</button></div></div>`; }).join("")}
+    <div class="inline"><input id="addsub" placeholder="Add a module, e.g. Data Mining" aria-label="Add a module"><button class="mini" type="button" id="addsubBtn">Add module</button></div>
+  </div>`;
+}
+function extraHtml(id, w){
+  if(id === "ava") return shiftsHtml(Array.isArray(w.shifts) ? w.shifts : []);
+  if(id === "kai") return jobsHtml();
+  if(id === "rex") return eventsHtml();
+  if(id === "mira") return quizHtml(w) + topicsHtml(w);
+  return "";
+}
+function wireExtra(id){
+  const el = $("#panel");
+  el.querySelectorAll("select[data-job]").forEach(s => s.addEventListener("change", () =>
+    db.doc("jobs/"+s.dataset.job).update({status:s.value, updatedAt:Date.now()}).catch(e => setFlash("Couldn't update: "+(e.message||e.code), true))));
+  $("#jobsAll")?.addEventListener("click", () => { showAllJobs = !showAllJobs; renderPanel(); });
+  el.querySelectorAll("button[data-ev]").forEach(b => b.addEventListener("click", () => {
+    const ev = events.find(e => e._id === b.dataset.ev); const v = ev?.going === b.dataset.v ? null : b.dataset.v;
+    db.doc("events/"+b.dataset.ev).update({going:v}).catch(e => setFlash("Couldn't update: "+(e.message||e.code), true)); }));
+  // quiz
+  el.querySelectorAll(".opts button[data-q]").forEach(b => b.addEventListener("click", () => {
+    const qz = workers.mira.quiz, picks = quizPicks[qz.id]; picks[+b.dataset.q] = +b.dataset.k; renderPanel();
+    if(picks.every(p => p !== null) && !attempts[qz.id] && db){
+      const wrongTopics = qz.questions.filter((q,i) => picks[i] !== q.answer).map(q => q.topic).filter(Boolean);
+      const score = picks.reduce((a,p,i) => a + (p === qz.questions[i].answer ? 1 : 0), 0);
+      db.doc("quizAttempts/"+qz.id).set({quizId:qz.id, subject:qz.subject||"", answers:picks, score, total:qz.questions.length, wrongTopics, at:Date.now()}).catch(()=>{});
+    }
+  }));
+  // topics
+  const saveSubs = subs => db.doc("workers/mira").update({subjects:subs}).catch(e => setFlash("Couldn't save: "+(e.message||e.code), true));
+  const subs = () => JSON.parse(JSON.stringify(workers.mira?.subjects || []));
+  el.querySelectorAll(".tchip").forEach(b => b.addEventListener("click", () => { const s = subs(); const t = s[+b.dataset.s].topics[+b.dataset.t]; t.on = !t.on; saveSubs(s); }));
+  el.querySelectorAll("button[data-addt]").forEach(b => b.addEventListener("click", () => { const i = +b.dataset.addt, inp = $("#addt-"+i), v = inp.value.trim(); if(!v) return; const s = subs(); s[i].topics = [...(s[i].topics||[]), {name:v, on:true}]; saveSubs(s); }));
+  el.querySelectorAll("input[data-exam]").forEach(inp => inp.addEventListener("change", () => { const s = subs(); s[+inp.dataset.exam].examDate = inp.value || ""; saveSubs(s); }));
+  el.querySelectorAll("button[data-delsub]").forEach(b => b.addEventListener("click", () => { const s = subs(); s.splice(+b.dataset.delsub,1); saveSubs(s); }));
+  $("#addsubBtn")?.addEventListener("click", () => { const v = $("#addsub").value.trim(); if(!v) return; const s = subs(); s.push({name:v, topics:[]}); saveSubs(s); });
+  // shift quick-log
+  $("#logShift")?.addEventListener("click", logShift);
+  el.querySelectorAll("button[data-delshift]").forEach(b => b.addEventListener("click", () => {
+    const [date,start] = b.dataset.delshift.split("|"); const arr = (workers.ava.shifts||[]).filter(x => !(x.date === date && x.start === start));
+    db.doc("workers/ava").update({shifts:arr}).catch(e => setFlash("Couldn't delete: "+(e.message||e.code), true)); }));
+}
+function lastSaturday(){ const d = sgNow(); const back = (d.getUTCDay()+1)%7; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()-back)).toISOString().slice(0,10); }
+const toMin = t => { const [h,m] = String(t).split(":").map(Number); return h*60 + (m||0); };
+function logShift(){
+  const date = $("#sDate").value, start = $("#sStart").value, end = $("#sEnd").value, brk = Math.max(0, Number($("#sBreak").value)||0);
+  if(!date || !start || !end){ setFlash("Fill in the date, start and end time.", true); return; }
+  let mins = toMin(end) - toMin(start); if(mins <= 0) mins += 24*60; mins -= brk;
+  if(mins <= 0){ setFlash("That shift comes out to 0 hours. Check the times and break.", true); return; }
+  const hours = Math.round(mins/15)/4;
+  const arr = (workers.ava.shifts||[]).filter(x => !(x.date === date && x.start === start));
+  arr.push({date, start, end, breakMins:brk, hours, note:"Logged from the office"}); arr.sort((a,b) => String(a.date).localeCompare(String(b.date)));
+  db.doc("workers/ava").update({shifts:arr}).then(() => setFlash(`Logged ${fmtDay(date)}: ${hours} h.`)).catch(e => setFlash("Couldn't log it: "+(e.message||e.code), true));
+}
+
+/* Boss: digest + ask the office */
+function officeContext(){
+  const lines = [`Today (Singapore): ${sgNow().toUTCString().slice(0,16)}`];
+  for(const id of ORDER){ const w = workers[id]; if(!w) continue;
+    lines.push(`\n## ${w.name} — ${w.role} (status ${w.status||"idle"}, last shift ${w.lastRun ? fmt(w.lastRun) : "never"})`);
+    if(w.reportBody) lines.push(String(w.reportBody).slice(0,1800)); }
+  const t = workers.theo?.projects; if(t) lines.push("\n## Deadlines (Theo)\n" + JSON.stringify(t));
+  const sh = workers.ava?.shifts; if(sh) lines.push("\n## Logged shifts (Ava)\n" + JSON.stringify(sh.slice(-12)));
+  const bl = workers.lin?.blocked; if(bl?.length) lines.push("\n## Dates she can't work (Lin)\n" + JSON.stringify(bl));
+  const fx = workers.nova?.fixed; if(fx?.length) lines.push("\n## Fixed commitments (Nova)\n" + fx.join("; "));
+  if(jobs.length) lines.push("\n## Job pipeline\n" + jobs.map(j => `- ${j.title} @ ${j.company} — ${j.status}`).join("\n"));
+  if(events.length) lines.push("\n## Events\n" + events.map(e => `- ${e.title} ${e.start}${e.end&&e.end!==e.start?"–"+e.end:""} ${e.time||""} — ${e.going||"undecided"}`).join("\n"));
+  return lines.join("\n");
+}
+async function askOffice(){
+  const q = $("#askQ").value.trim(); if(!q || askState.busy) return;
+  askCtl = new AbortController(); askState = {q, text:"", busy:true, err:""}; renderPanel();
+  const prompt = `You are the front desk of an AI Office run by a student who also works weekend part-time shifts. Answer her question using ONLY the office data below. Be direct, casual and short (a few sentences or a short list). If the data doesn't cover it, say what's missing and which worker to leave a note for.\n\n# Office data\n${officeContext()}\n\n# The question\n${q}`;
+  try{
+    await sampleFn(prompt.slice(0, 200000), {signal:askCtl.signal, cache:false, onText:({text}) => { askState.text = text; const a = $("#askA"); if(a) a.innerHTML = md(text); }});
+  }catch(e){
+    askState.text = e.text || askState.text;
+    if(e.code !== "cancelled") askState.err = e.code === "not_granted" || e.code === "sampling_disabled" ? "Asking needs your permission. Tap Ask again and allow it." : e.code === "rate_limited" ? "Too many questions right now. Try again in a bit." : "Couldn't get an answer. Try again.";
+  }
+  askState.busy = false; renderPanel();
+}
+
+function renderAll(){ unread = Object.fromEntries(ORDER.map(id => [id, isNew(id)])); renderBubbles(); renderLive(); renderOps(); renderPanel(); }
+const sheet = $("#sheet");
+function select(id){
+  selected = id; flash = null;
+  if(id !== "boss") markSeen(id);
+  sheet.classList.add("open"); document.body.classList.add("sheet-open"); sheet.scrollTop = 0;
+  renderAll();
+  focusOn(id === "boss" ? BOSS_POS : people[id].pos);
+}
+function closeSheet(){
+  selected = null; sheet.classList.remove("open"); document.body.classList.remove("sheet-open"); renderBubbles();
+}
+$("#close").addEventListener("click", () => { closeSheet(); wantZoom = Math.min(wantZoom, isPhone() ? 1.4 : 1.2); });
+addEventListener("keydown", e => { if(e.key === "Escape" && selected) closeSheet(); });
+
+/* ---------- Actions ---------- */
+function setFlash(text, err=false){ flash = {text, err}; renderPanel(); }
+function mcpErr(e){
+  const c = e?.code;
+  if(c === "server_not_connected") return "Claude Code Remote isn't connected. Add it in claude.ai Settings → Connectors.";
+  if(c === "needs_reauth") return "Reconnect Claude Code Remote in claude.ai Settings → Connectors.";
+  if(c === "approval_required" || c === "not_in_manifest") return "This needs your approval. Tap the button again and allow it when asked.";
+  if(c === "server_unavailable" || c === "upstream_error") return "Couldn't confirm it went through. Check Recent shifts in a minute before trying again.";
+  return "That didn't work: " + (e?.message || c || "unknown error");
+}
+async function runNow(id, text){
+  const w = workers[id];
+  try{
+    if(text && db) await db.collection("orders").add({workerId:id, text, status:"pending", createdAt:Date.now(), immediate:true});
+    await mcp.callTool("Claude Code Remote","fire_trigger",{trigger_id:w.triggerId, ...(text ? {text:"Boss's instruction for this shift: " + text} : {})});
+    if(text) $("#orderText").value = "";
+    setFlash(`${w.name} is starting a shift. The report lands here when it's done, usually in a few minutes.`);
+  }catch(e){ setFlash(mcpErr(e), true); }
+}
+async function toggleLeave(id){
+  const w = workers[id], goingOnLeave = w.status !== "paused";
+  try{
+    await mcp.callTool("Claude Code Remote","update_trigger",{trigger_id:w.triggerId, enabled:!goingOnLeave});
+    await db.doc("workers/"+id).update({status: goingOnLeave ? "paused" : "idle", bubble: goingOnLeave ? "On leave" : "Back at my desk"});
+    setFlash(goingOnLeave ? `${w.name} is on leave. No scheduled shifts until you bring them back.` : `${w.name} is back on schedule.`);
+  }catch(e){ setFlash(mcpErr(e), true); }
+}
+async function leaveNote(id){
+  const t = $("#orderText").value.trim(); if(!t) return;
+  try{
+    await db.collection("orders").add({workerId:id, text:t, status:"pending", createdAt:Date.now()});
+    $("#orderText").value = "";
+    setFlash("Note left on the desk.");
+  }catch(e){ setFlash(e?.code === "quota_exceeded" ? "The notes pile is full. Clear old notes first." : "Couldn't leave the note: " + (e?.message||e), true); }
+}
+
+/* ---------- Data ---------- */
+renderClock(); renderAll();
+setInterval(() => { renderClock(); applyTime(); renderBubbles(); renderLive(); }, 30000);
+document.fonts?.ready.then(() => { textPlanes.forEach(p => p.userData.redraw()); });
+(async () => {
+  try{ db = await DEMO.use("db"); }catch{ db = null; }
+  try{ mcp = await DEMO.use("mcp"); }catch{ mcp = null; }
+  try{ sampleFn = await DEMO.use("sample"); }catch{ sampleFn = null; }
+  if(!db){ $("#live").innerHTML = `<span class="dot failed"></span>Open in claude.ai`; renderPanel(); return; }
+  db.collection("workers").onSnapshot(s => { workers = {}; s.docs.forEach(d => workers[d.id] = d.data()); renderAll(); }, () => {});
+  db.collection("runs").orderBy("at","desc").limit(120).onSnapshot(s => { runs = s.docs.map(d => d.data()); renderOps(); renderPanel(); }, () => {});
+  db.collection("orders").orderBy("createdAt","desc").limit(60).onSnapshot(s => { orders = s.docs.map(d => d.data()); renderPanel(); }, () => {});
+  const withId = s => s.docs.map(d => ({...d.data(), _id:d.id}));
+  db.collection("jobs").orderBy("foundAt","desc").limit(300).onSnapshot(s => { jobs = withId(s); renderOps(); if(selected === "kai") renderPanel(); }, () => {});
+  db.collection("events").orderBy("start","asc").limit(200).onSnapshot(s => { events = withId(s); if(selected === "rex") renderPanel(); }, () => {});
+  db.collection("seen").onSnapshot(s => { seen = {}; s.docs.forEach(d => seen[d.id] = d.data()); renderAll(); }, () => {});
+  db.collection("quizAttempts").orderBy("at","desc").limit(40).onSnapshot(s => { attempts = {}; s.docs.forEach(d => attempts[d.id] = d.data()); if(selected === "mira") renderPanel(); }, () => {});
+  db.collection("office").onSnapshot(s => { office = {}; s.docs.forEach(d => office[d.id] = d.data()); if(selected === "boss") renderPanel(); }, () => {});
+})();
+})();
+</script>
+
+<div class="howwrap" id="how" role="dialog" aria-modal="true" aria-labelledby="howTitle">
+  <div class="howcard">
+    <button class="close" id="howClose" type="button" aria-label="Close">✕</button>
+    <div class="eyebrow">Portfolio project · agentic AI</div>
+    <h2 id="howTitle">An office of AI agents that runs student life admin</h2>
+    <p>Eight Claude agents each own one job: job hunting, exam quizzes, project deadlines, part-time shift hours and pay, weekly planning, event scouting, portfolio reviews and work availability. They run on schedules in the cloud, share one database, and report back to this 3D office.</p>
+    <div class="flow" aria-label="Architecture">
+      <div class="node"><b>Scheduled agents</b><span>8 Claude agents on cron schedules, each with its own instructions and tools (web search, database)</span></div>
+      <div class="arrow" aria-hidden="true">⇄</div>
+      <div class="node"><b>Shared document DB</b><span>workers · jobs · events · quizzes · shift log · orders. Agents read each other's output</span></div>
+      <div class="arrow" aria-hidden="true">⇄</div>
+      <div class="node"><b>3D office (Three.js)</b><span>live subscriptions, status animations, reports, instructions, “Ask the office”</span></div>
+    </div>
+    <ul class="howlist">
+      <li><b>Human in the loop:</b> I set job statuses, quiz topics, “going” on events and leave notes. Agents pick those up next shift.</li>
+      <li><b>Trigger on demand:</b> “Start shift now” fires the agent through an MCP connector. Here it's simulated.</li>
+      <li><b>Agents that collaborate:</b> the planner reads deadlines, shifts, quiz weak spots and events from the others.</li>
+      <li><b>Stack:</b> Claude (scheduled agents, MCP, sampling) · Three.js · vanilla JS · document DB with live snapshots.</li>
+    </ul>
+    <p class="note">This demo runs entirely in your browser with sample data. The real office runs on my Claude account with real data.</p>
+    <button class="primary" id="howGo" type="button">Explore the office</button>
+  </div>
+</div>
+<style>
+.chip.how{cursor:pointer;font-weight:600;color:#fff;background:var(--accent);border-color:var(--accent)}
+.howwrap{position:fixed;inset:0;z-index:20;background:rgba(19,32,48,.42);display:grid;place-items:center;padding:16px max(16px, env(safe-area-inset-right,0px)) 16px max(16px, env(safe-area-inset-left,0px));backdrop-filter:blur(3px)}
+.howwrap[hidden]{display:none!important}
+.howcard{background:#fff;border-radius:20px;max-width:640px;width:100%;max-height:calc(100svh - 32px);overflow:auto;padding:22px;display:flex;flex-direction:column;gap:12px;box-shadow:0 24px 60px rgba(19,32,48,.25)}
+.howcard h2{font-family:var(--display);font-weight:700;font-size:24px;margin:0;line-height:1.15;text-wrap:balance;padding-right:40px}
+.howcard p{margin:0;line-height:1.55;font-size:14px}
+.flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:8px;align-items:stretch}
+.node{border:1px solid var(--line);background:var(--glass-2);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:4px;font-size:12.5px;min-width:0}
+.node b{font-family:var(--display);font-size:14px}
+.node span{color:var(--mute);line-height:1.4}
+.arrow{align-self:center;color:var(--accent);font-size:20px}
+.howlist{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13.5px;line-height:1.5}
+@media (max-width:600px){ .flow{grid-template-columns:1fr} .arrow{justify-self:center;transform:rotate(90deg)} }
+</style>
+<script>
+(() => {
+  const how = document.getElementById("how");
+  const close = () => { how.hidden = true; };
+  document.getElementById("howBtn").addEventListener("click", () => { how.hidden = false; });
+  document.getElementById("howClose").addEventListener("click", close);
+  document.getElementById("howGo").addEventListener("click", close);
+  how.addEventListener("click", e => { if(e.target === how) close(); });
+  addEventListener("keydown", e => { if(e.key === "Escape") close(); });
+})();
+</script>
